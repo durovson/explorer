@@ -1,0 +1,11 @@
+aiogram>=3.22,<4
+fastapi>=0.116,<1
+uvicorn[standard]>=0.35,<1
+supabase>=2.18,<3
+pydantic>=2.11,<3
+pydantic-settings>=2.10,<3
+httpx>=0.28,<1
+redis>=6,<7
+pytest>=8,<9
+pytest-asyncio>=1,<2
+
