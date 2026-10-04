@@ -61,10 +61,16 @@ class Settings(BaseSettings):
     MARKETAPP_TON_API_KEY: str = ""
     MARKETAPP_TIMEOUT_SECONDS: int = Field(default=45, ge=10, le=120)
     MARKETAPP_RENT_PAGE_SIZE: int = Field(default=6, ge=1, le=20)
-    MARKETAPP_GRAM_MARKUP: Decimal = Field(default=Decimal("1.03"), ge=Decimal("1"), le=Decimal("2"))
-    MARKETAPP_RENT_MARKUP: Decimal = Field(default=Decimal("1.03"), ge=Decimal("1"), le=Decimal("2"))
-    MARKETAPP_GRAM_MIN: Decimal = Field(default=Decimal("0.1"), gt=Decimal("0"))
-    MARKETAPP_GRAM_MAX: Decimal = Field(default=Decimal("1000"), gt=Decimal("0"))
+    MARKETAPP_GRAM_MARKUP: Decimal = Field(
+        default=Decimal("1.03"), ge=Decimal("1"), le=Decimal("2")
+    )
+    MARKETAPP_RENT_MARKUP: Decimal = Field(
+        default=Decimal("1.03"), ge=Decimal("1"), le=Decimal("2")
+    )
+    # Marketapp TelegramTopupBody accepts whole GRAM amounts. The provider supports
+    # a larger range; the default max here is deliberately conservative.
+    MARKETAPP_GRAM_MIN: int = Field(default=1, ge=1)
+    MARKETAPP_GRAM_MAX: int = Field(default=1000, ge=1)
 
     FULFILLMENT_LEASE_SECONDS: int = Field(default=180, ge=60, le=900)
 
