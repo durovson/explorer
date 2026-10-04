@@ -4,11 +4,18 @@ from enum import StrEnum
 class ProductType(StrEnum):
     STARS = "STARS"
     PREMIUM = "PREMIUM"
+    GRAM = "GRAM"
+    NFT_RENT = "NFT_RENT"
 
 
 class Currency(StrEnum):
     TON = "TON"
     USDT = "USDT"
+
+
+class OrderProvider(StrEnum):
+    FRAGMENT = "FRAGMENT"
+    MARKETAPP = "MARKETAPP"
 
 
 class OrderStatus(StrEnum):
