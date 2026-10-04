@@ -47,9 +47,25 @@ class Settings(BaseSettings):
     PAYMENT_MAX_PAGES: int = Field(default=10, ge=1, le=100)
     ORDER_BATCH_SIZE: int = Field(default=100, ge=1, le=500)
 
+    # Legacy provider. Existing FRAGMENT orders can still be completed after migration.
     FRAGMENT_BASE_URL: str = "https://api.fragment-api.com/v1"
-    FRAGMENT_JWT_TOKEN: str
+    FRAGMENT_JWT_TOKEN: str = ""
     FRAGMENT_TIMEOUT_SECONDS: int = Field(default=45, ge=10, le=120)
+
+    # Marketapp is the provider for all newly-created orders.
+    # Authorization uses the raw token value; never add a Bearer/JWT prefix.
+    MARKETAPP_BASE_URL: str = "https://api.marketapp.org"
+    MARKETAPP_API_TOKEN: str = ""
+    MARKETAPP_WALLET_SEED: str = ""
+    MARKETAPP_WALLET_VERSION: str = "V5R1"
+    MARKETAPP_TON_API_KEY: str = ""
+    MARKETAPP_TIMEOUT_SECONDS: int = Field(default=45, ge=10, le=120)
+    MARKETAPP_RENT_PAGE_SIZE: int = Field(default=6, ge=1, le=20)
+    MARKETAPP_GRAM_MARKUP: Decimal = Field(default=Decimal("1.03"), ge=Decimal("1"), le=Decimal("2"))
+    MARKETAPP_RENT_MARKUP: Decimal = Field(default=Decimal("1.03"), ge=Decimal("1"), le=Decimal("2"))
+    MARKETAPP_GRAM_MIN: Decimal = Field(default=Decimal("0.1"), gt=Decimal("0"))
+    MARKETAPP_GRAM_MAX: Decimal = Field(default=Decimal("1000"), gt=Decimal("0"))
+
     FULFILLMENT_LEASE_SECONDS: int = Field(default=180, ge=60, le=900)
 
     STARS_TON_PER_UNIT: Decimal = Decimal("0.0097")
@@ -67,6 +83,14 @@ class Settings(BaseSettings):
             int(item.strip()) for item in self.ADMIN_IDS.split(",") if item.strip()
         )
 
+    @property
+    def marketapp_auto_pay_configured(self) -> bool:
+        return bool(self.MARKETAPP_API_TOKEN and self.MARKETAPP_WALLET_SEED)
+
+    @property
+    def marketapp_ton_api_key(self) -> str:
+        return self.MARKETAPP_TON_API_KEY or self.TONCENTER_API_KEY
+
     @field_validator("USDT_MASTER_ADDRESS")
     @classmethod
     def official_usdt_only(cls, value: str) -> str:
@@ -80,7 +104,6 @@ class Settings(BaseSettings):
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "TON_RECEIVER_ADDRESS",
-        "FRAGMENT_JWT_TOKEN",
         mode="before",
     )
     @classmethod
@@ -88,6 +111,27 @@ class Settings(BaseSettings):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("must not be empty")
         return value.strip()
+
+    @field_validator(
+        "FRAGMENT_JWT_TOKEN",
+        "MARKETAPP_API_TOKEN",
+        "MARKETAPP_WALLET_SEED",
+        "MARKETAPP_TON_API_KEY",
+        mode="before",
+    )
+    @classmethod
+    def optional_secret_text(cls, value: object) -> object:
+        if value is None:
+            return ""
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("MARKETAPP_WALLET_VERSION")
+    @classmethod
+    def supported_wallet_version(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in {"V5R1", "V4R2"}:
+            raise ValueError("MARKETAPP_WALLET_VERSION must be V5R1 or V4R2")
+        return normalized
 
 
 @lru_cache(maxsize=1)
