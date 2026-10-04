@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from html import escape
 from uuid import UUID
 
@@ -18,7 +19,7 @@ from app.keyboards.menu import (
     product_options,
     recipient_keyboard,
 )
-from app.services.fragment import FragmentService
+from app.services.marketapp import MarketappService
 from app.services.orders import OrderService
 from app.services.pricing import PriceService
 from app.states import PurchaseStates
@@ -27,17 +28,35 @@ from app.utils.media import edit_card, render_card
 router = Router(name="purchase")
 
 
+def _product_title(product: ProductType) -> str:
+    if product is ProductType.STARS:
+        return "⭐ Купить Stars"
+    if product is ProductType.PREMIUM:
+        return "💎 Купить Premium"
+    return "◈ Пополнить GRAM"
+
+
+def _option_word(product: ProductType) -> str:
+    if product is ProductType.STARS:
+        return "количество Stars"
+    if product is ProductType.PREMIUM:
+        return "срок подписки"
+    return "сумму GRAM"
+
+
 @router.callback_query(F.data.startswith("buy:"))
 async def choose_recipient(callback: CallbackQuery, state: FSMContext) -> None:
     product = ProductType((callback.data or "buy:STARS").split(":", 1)[1])
+    if product is ProductType.NFT_RENT:
+        await callback.answer()
+        return
     await state.clear()
     await state.update_data(
         product=product.value,
         card_chat_id=callback.message.chat.id if callback.message else None,
         card_message_id=callback.message.message_id if callback.message else None,
     )
-    title = "⭐ Купить Stars" if product is ProductType.STARS else "💎 Купить Premium"
-    text = f"<b>{title}</b>\n\nКому отправить покупку?"
+    text = f"<b>{_product_title(product)}</b>\n\nКому отправить покупку?"
     if callback.message:
         await render_card(
             callback.message,
@@ -90,11 +109,10 @@ async def _show_options(message: Message | None, state: FSMContext) -> None:
     await state.set_state(None)
     data = await state.get_data()
     product = ProductType(data["product"])
-    title = "⭐ Купить Stars" if product is ProductType.STARS else "💎 Купить Premium"
     text = (
-        f"<b>{title}</b>\n\n"
+        f"<b>{_product_title(product)}</b>\n\n"
         f"Получатель: <b>{escape(data['recipient'])}</b>\n\n"
-        f"Выберите {'количество' if product is ProductType.STARS else 'срок подписки'}:"
+        f"Выберите {_option_word(product)}:"
     )
     if message:
         await render_card(message, text, product_options(product.value), "product")
@@ -104,11 +122,10 @@ async def _show_options_stored(bot: Bot, state: FSMContext) -> None:
     await state.set_state(None)
     data = await state.get_data()
     product = ProductType(data["product"])
-    title = "⭐ Купить Stars" if product is ProductType.STARS else "💎 Купить Premium"
     text = (
-        f"<b>{title}</b>\n\n"
+        f"<b>{_product_title(product)}</b>\n\n"
         f"Получатель: <b>{escape(data['recipient'])}</b>\n\n"
-        f"Выберите {'количество' if product is ProductType.STARS else 'срок подписки'}:"
+        f"Выберите {_option_word(product)}:"
     )
     await edit_card(
         bot,
@@ -150,13 +167,46 @@ async def custom_amount_input(
     except ValueError:
         await message.answer("❌ Введите целое число от 50 до 1 000 000.")
         return
-    await state.update_data(stars_amount=amount, premium_months=None)
+    await state.update_data(stars_amount=amount, premium_months=None, gram_amount=None)
     with suppress(TelegramBadRequest):
         await message.delete()
     await _show_currencies_stored(bot, state, pricing)
 
 
-@router.callback_query(F.data.startswith("amount:") | F.data.startswith("months:"))
+@router.callback_query(F.data == "gram:custom")
+async def custom_gram(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(PurchaseStates.custom_gram)
+    if callback.message:
+        await render_card(
+            callback.message,
+            "<b>◈ Сумма GRAM</b>\n\nВведите сумму, например <code>5</code> или <code>12.5</code>:",
+            back_home(),
+            "product",
+        )
+    await callback.answer()
+
+
+@router.message(PurchaseStates.custom_gram)
+async def custom_gram_input(
+    message: Message, state: FSMContext, bot: Bot, pricing: PriceService
+) -> None:
+    try:
+        amount = Decimal((message.text or "").replace(",", ".").strip())
+        if amount <= 0:
+            raise ValueError
+        pricing.calculate(ProductType.GRAM, Currency.TON, gram_amount=amount)
+    except (InvalidOperation, ValueError):
+        await message.answer("❌ Введите корректную сумму GRAM в допустимом диапазоне.")
+        return
+    await state.update_data(stars_amount=None, premium_months=None, gram_amount=str(amount))
+    with suppress(TelegramBadRequest):
+        await message.delete()
+    await _show_currencies_stored(bot, state, pricing)
+
+
+@router.callback_query(
+    F.data.startswith("amount:") | F.data.startswith("months:") | F.data.startswith("gram:")
+)
 async def select_option(
     callback: CallbackQuery, state: FSMContext, pricing: PriceService
 ) -> None:
@@ -164,9 +214,11 @@ async def select_option(
     if raw == "custom":
         return
     if kind == "amount":
-        await state.update_data(stars_amount=int(raw), premium_months=None)
+        await state.update_data(stars_amount=int(raw), premium_months=None, gram_amount=None)
+    elif kind == "months":
+        await state.update_data(stars_amount=None, premium_months=int(raw), gram_amount=None)
     else:
-        await state.update_data(stars_amount=None, premium_months=int(raw))
+        await state.update_data(stars_amount=None, premium_months=None, gram_amount=raw)
     await _show_currencies(callback.message, state, pricing)
     await callback.answer()
 
@@ -176,15 +228,22 @@ async def _show_currencies(
 ) -> None:
     await state.set_state(None)
     data = await state.get_data()
+    product = ProductType(data["product"])
     text = _currency_text(data, pricing)
     if message:
-        await render_card(message, text, currency_keyboard(), "payment_method")
+        await render_card(
+            message,
+            text,
+            currency_keyboard(ton_only=product is ProductType.GRAM),
+            "payment_method",
+        )
 
 
 async def _show_currencies_stored(
     bot: Bot, state: FSMContext, pricing: PriceService
 ) -> None:
     data = await state.get_data()
+    product = ProductType(data["product"])
     text = _currency_text(data, pricing)
     await state.set_state(None)
     await edit_card(
@@ -192,7 +251,7 @@ async def _show_currencies_stored(
         data["card_chat_id"],
         data["card_message_id"],
         text,
-        currency_keyboard(),
+        currency_keyboard(ton_only=product is ProductType.GRAM),
         "payment_method",
     )
 
@@ -202,20 +261,27 @@ def _currency_text(data: dict, pricing: PriceService) -> str:
     kwargs = {
         "stars_amount": data.get("stars_amount"),
         "premium_months": data.get("premium_months"),
+        "gram_amount": Decimal(data["gram_amount"]) if data.get("gram_amount") else None,
     }
+    if product is ProductType.STARS:
+        label = f"{data['stars_amount']} ⭐"
+    elif product is ProductType.PREMIUM:
+        label = f"Telegram Premium — {data['premium_months']} мес."
+    else:
+        label = f"{data['gram_amount']} GRAM на баланс"
     ton = pricing.calculate(product, Currency.TON, **kwargs)
-    usdt = pricing.calculate(product, Currency.USDT, **kwargs)
-    label = (
-        f"{data['stars_amount']} ⭐"
-        if product is ProductType.STARS
-        else f"Telegram Premium — {data['premium_months']} мес."
-    )
-    return (
-        f"<b>{label}</b>\nПолучатель: <b>{escape(data['recipient'])}</b>\n\n"
-        "Выберите способ оплаты:\n\n"
-        f"💎 TON: <b>{ton} TON</b>\n"
-        f"💵 USDT (TON): <b>{usdt} USDT</b>"
-    )
+    lines = [
+        f"<b>{label}</b>",
+        f"Получатель: <b>{escape(data['recipient'])}</b>",
+        "",
+        "Выберите способ оплаты:",
+        "",
+        f"💎 TON: <b>{ton} TON</b>",
+    ]
+    if product is not ProductType.GRAM:
+        usdt = pricing.calculate(product, Currency.USDT, **kwargs)
+        lines.append(f"💵 USDT (TON): <b>{usdt} USDT</b>")
+    return "\n".join(lines)
 
 
 @router.callback_query(F.data.startswith("currency:"))
@@ -223,24 +289,29 @@ async def create_order(
     callback: CallbackQuery,
     state: FSMContext,
     orders: OrderService,
-    fragment: FragmentService,
+    marketapp: MarketappService,
 ) -> None:
     data = await state.get_data()
+    product = ProductType(data["product"])
+    currency = Currency((callback.data or "currency:TON").split(":", 1)[1])
     try:
-        await fragment.user_info(data["recipient"])
+        marketapp.ensure_ready()
+        preflight = await marketapp.search_recipient(product, data["recipient"])
         order = await orders.create(
             user_id=callback.from_user.id,
             recipient=data["recipient"],
-            product=ProductType(data["product"]),
-            currency=Currency((callback.data or "currency:TON").split(":", 1)[1]),
+            product=product,
+            currency=currency,
             stars_amount=data.get("stars_amount"),
             premium_months=data.get("premium_months"),
+            gram_amount=(Decimal(data["gram_amount"]) if data.get("gram_amount") else None),
+            provider_payload=preflight,
             chat_id=callback.message.chat.id,
             message_id=callback.message.message_id,
         )
     except Exception as exc:
         await callback.answer(
-            f"Получатель не прошёл проверку Fragment: {str(exc)[:100]}",
+            f"Marketapp не готов принять заказ: {str(exc)[:120]}",
             show_alert=True,
         )
         return
