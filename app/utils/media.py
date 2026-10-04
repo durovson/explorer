@@ -26,7 +26,17 @@ def media_path(screen: str) -> Path:
     return FALLBACK
 
 
-def input_media(screen: str, caption: str):
+def _remote_photo(media_url: str | None) -> str | None:
+    if not media_url:
+        return None
+    value = media_url.strip()
+    return value if value.startswith(("https://", "http://")) else None
+
+
+def input_media(screen: str, caption: str, media_url: str | None = None):
+    remote = _remote_photo(media_url)
+    if remote:
+        return InputMediaPhoto(media=remote, caption=caption)
     path = media_path(screen)
     source = FSInputFile(path)
     if path.suffix.lower() in {".gif", ".mp4"}:
@@ -39,7 +49,11 @@ async def send_card(
     caption: str,
     keyboard: InlineKeyboardMarkup | None,
     screen: str,
+    media_url: str | None = None,
 ) -> Message:
+    remote = _remote_photo(media_url)
+    if remote:
+        return await message.answer_photo(remote, caption=caption, reply_markup=keyboard)
     path = media_path(screen)
     if path.suffix.lower() in {".gif", ".mp4"}:
         return await message.answer_animation(
@@ -55,6 +69,7 @@ async def render_card(
     caption: str,
     keyboard: InlineKeyboardMarkup | None,
     screen: str,
+    media_url: str | None = None,
 ) -> Message:
     if (
         message.from_user
@@ -63,13 +78,13 @@ async def render_card(
     ):
         try:
             result = await message.edit_media(
-                input_media(screen, caption), reply_markup=keyboard
+                input_media(screen, caption, media_url), reply_markup=keyboard
             )
             return result if isinstance(result, Message) else message
         except TelegramBadRequest as exc:
             if "message is not modified" in str(exc).lower():
                 return message
-    return await send_card(message, caption, keyboard, screen)
+    return await send_card(message, caption, keyboard, screen, media_url)
 
 
 async def edit_card(
@@ -79,12 +94,13 @@ async def edit_card(
     caption: str,
     keyboard: InlineKeyboardMarkup | None,
     screen: str,
+    media_url: str | None = None,
 ) -> None:
     try:
         await bot.edit_message_media(
             chat_id=chat_id,
             message_id=message_id,
-            media=input_media(screen, caption),
+            media=input_media(screen, caption, media_url),
             reply_markup=keyboard,
         )
     except TelegramBadRequest as exc:
