@@ -4,11 +4,13 @@ import re
 import secrets
 import string
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Any
 from urllib.parse import urlencode
 from uuid import UUID, uuid4
 
 from app.config import Settings
-from app.core.enums import Currency, OrderStatus, ProductType
+from app.core.enums import Currency, OrderProvider, OrderStatus, ProductType
 from app.models.entities import Order
 from app.repositories.orders import OrderRepository
 from app.services.pricing import PriceService
@@ -45,8 +47,14 @@ class OrderService:
         recipient: str,
         product: ProductType,
         currency: Currency,
-        stars_amount: int | None,
-        premium_months: int | None,
+        stars_amount: int | None = None,
+        premium_months: int | None = None,
+        gram_amount: Decimal | None = None,
+        nft_address: str | None = None,
+        rent_days: int | None = None,
+        provider_price_gram: Decimal | None = None,
+        provider_payload: dict[str, Any] | None = None,
+        provider: OrderProvider = OrderProvider.MARKETAPP,
         chat_id: int,
         message_id: int,
     ) -> Order:
@@ -56,6 +64,8 @@ class OrderService:
             currency,
             stars_amount=stars_amount,
             premium_months=premium_months,
+            gram_amount=gram_amount,
+            provider_price_gram=provider_price_gram,
         )
         values = {
             "id": str(uuid4()),
@@ -64,6 +74,14 @@ class OrderService:
             "product_type": product.value,
             "stars_amount": stars_amount,
             "premium_months": premium_months,
+            "gram_amount": str(gram_amount) if gram_amount is not None else None,
+            "nft_address": nft_address,
+            "rent_days": rent_days,
+            "provider_price_gram": (
+                str(provider_price_gram) if provider_price_gram is not None else None
+            ),
+            "provider_payload": provider_payload or {},
+            "provider": provider.value,
             "currency": currency.value,
             "amount": str(amount),
             "wallet_address": self.settings.TON_RECEIVER_ADDRESS,
