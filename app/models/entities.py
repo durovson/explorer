@@ -5,9 +5,15 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.core.enums import Currency, FulfillmentAttemptStatus, OrderStatus, ProductType
+from app.core.enums import (
+    Currency,
+    FulfillmentAttemptStatus,
+    OrderProvider,
+    OrderStatus,
+    ProductType,
+)
 
 
 class User(BaseModel):
@@ -25,6 +31,12 @@ class Order(BaseModel):
     product_type: ProductType
     stars_amount: int | None = None
     premium_months: int | None = None
+    gram_amount: Decimal | None = None
+    nft_address: str | None = None
+    rent_days: int | None = None
+    provider_price_gram: Decimal | None = None
+    provider_payload: dict[str, Any] = Field(default_factory=dict)
+    provider: OrderProvider = OrderProvider.MARKETAPP
     currency: Currency
     amount: Decimal
     wallet_address: str
@@ -38,6 +50,10 @@ class Order(BaseModel):
     tx_hash: str | None = None
     tx_lt: int | None = None
     sender_address: str | None = None
+    provider_order_id: str | None = None
+    provider_response: dict[str, Any] | None = None
+    provider_tx_hash: str | None = None
+    # Backward-compatible fields for pre-migration Fragment orders.
     fragment_order_id: str | None = None
     fragment_response: dict[str, Any] | None = None
     error: str | None = None
@@ -49,7 +65,11 @@ class Order(BaseModel):
     def item_label(self) -> str:
         if self.product_type is ProductType.STARS:
             return f"{self.stars_amount} ⭐"
-        return f"Telegram Premium — {self.premium_months} мес."
+        if self.product_type is ProductType.PREMIUM:
+            return f"Telegram Premium — {self.premium_months} мес."
+        if self.product_type is ProductType.GRAM:
+            return f"{self.gram_amount} GRAM на баланс"
+        return f"Аренда NFT — {self.rent_days} дн."
 
 
 class FulfillmentAttempt(BaseModel):
