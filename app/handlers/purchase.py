@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from html import escape
 from uuid import UUID
 
@@ -179,7 +179,7 @@ async def custom_gram(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.message:
         await render_card(
             callback.message,
-            "<b>◈ Сумма GRAM</b>\n\nВведите сумму, например <code>5</code> или <code>12.5</code>:",
+            "<b>◈ Сумма GRAM</b>\n\nВведите целое количество GRAM, например <code>5</code> или <code>25</code>:",
             back_home(),
             "product",
         )
@@ -191,12 +191,10 @@ async def custom_gram_input(
     message: Message, state: FSMContext, bot: Bot, pricing: PriceService
 ) -> None:
     try:
-        amount = Decimal((message.text or "").replace(",", ".").strip())
-        if amount <= 0:
-            raise ValueError
-        pricing.calculate(ProductType.GRAM, Currency.TON, gram_amount=amount)
-    except (InvalidOperation, ValueError):
-        await message.answer("❌ Введите корректную сумму GRAM в допустимом диапазоне.")
+        amount = int((message.text or "").strip())
+        pricing.calculate(ProductType.GRAM, Currency.TON, gram_amount=Decimal(amount))
+    except ValueError:
+        await message.answer("❌ Введите целое количество GRAM в допустимом диапазоне.")
         return
     await state.update_data(stars_amount=None, premium_months=None, gram_amount=str(amount))
     with suppress(TelegramBadRequest):
