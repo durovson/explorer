@@ -1,80 +1,89 @@
-# Stars & Premium Shop
+# Marketapp Shop
 
-Telegram-бот на Python/aiogram 3 для прямой продажи Telegram Stars и Premium через
-Fragment. Пользователь не пополняет счет: каждый заказ — отдельный платеж на
-специальный TON-кошелек.
+Telegram-бот на Python/aiogram 3 для продажи Telegram Stars, Premium, пополнения
+GRAM и аренды Telegram NFT-подарков через Marketapp. Финансовое состояние хранится
+в Supabase; FSM используется только для временных полей UI.
 
-## Архитектура
+## Поток заказа
+
+1. Пользователь выбирает Stars / Premium / GRAM / NFT rent.
+2. Бот проверяет получателя или получает каталог аренды через Marketapp.
+3. Создаётся заказ и уникальный `memo`; пользователь платит TON (Stars/Premium
+   также поддерживают USDT-on-TON).
+4. Фоновый worker подтверждает входящую транзакцию по destination + asset + atomic
+   amount + memo. Один `tx_hash` не может оплатить два заказа.
+5. После `PAYMENT_CONFIRMED` Marketapp формирует операцию. Официальный
+   `marketapp-api` SDK подписывает и отправляет TON-транзакцию выделенным
+   settlement-кошельком, работающим с GRAM.
+6. Результат, provider order id и blockchain tx hash сохраняются в Supabase.
+   Неоднозначный результат переводится в `MANUAL_REVIEW` и **не повторяется
+   автоматически**.
+
+Старые заказы с `provider=FRAGMENT` продолжают исполняться старым адаптером, что
+позволяет мигрировать без потери уже оплаченных заказов.
+
+## Marketapp и blockchain
+
+Marketapp использует API-token в заголовке `Authorization` без `Bearer`. Для
+mutating endpoints часть ответов представляет собой транзакции, которые нужно
+отправить в TON. Поэтому для автоматического исполнения одного API-token
+недостаточно: нужен отдельный settlement wallet.
+
+В Render secrets задайте:
 
 ```text
-app/
-├── api/            # FastAPI health/webhook и Telegram notifications
-├── core/           # enums, exceptions
-├── database/       # асинхронная граница Supabase
-├── handlers/       # тонкие aiogram handlers
-├── keyboards/      # inline UI
-├── middleware/     # создание/получение пользователя
-├── models/         # Pydantic entities
-├── repositories/   # Supabase/PostgREST и RPC
-├── services/       # заказы, цены, TON/USDT, Fragment, рефералы, admin
-├── states/         # только не финансовый FSM ввода
-├── tasks/          # независимые payment/expiry/fulfillment workers
-└── utils/          # GRNT-style media renderer
+MARKETAPP_API_TOKEN=...
+MARKETAPP_WALLET_SEED=word1 word2 ... word24
+MARKETAPP_TON_API_KEY=...
+MARKETAPP_WALLET_VERSION=V5R1
 ```
 
-Финансовое состояние находится только в Supabase. FSM хранит лишь временные поля
-мастера покупки и никогда не подтверждает оплату.
+`MARKETAPP_TON_API_KEY` можно не задавать, если уже заполнен `TONCENTER_API_KEY`.
+Используйте отдельный wallet с минимально необходимым операционным балансом, а не
+основной/личный кошелёк. Token/seed не пишутся в БД, ответы Telegram или логи.
 
-## Гарантии платежа и идемпотентности
+## База данных
 
-- валюта ограничена `TON` и `USDT`; master USDT жестко проверяется конфигурацией;
-- для входящего перевода должны совпасть destination, asset, atomic amount и memo;
-- `tx_hash` уникален в БД, поэтому одна транзакция не оплатит два заказа;
-- подтверждение платежа и история статуса записываются одной PostgreSQL RPC;
-- Fragment-попытка имеет внутренний уникальный ключ и отдельный audit record; ключ
-  также отправляется поставщику как `Idempotency-Key`, но безопасность не зависит
-  от поддержки этого недокументированного request-header;
-- неоднозначный ответ никогда не повторяется автоматически.
+Для нового Supabase-проекта сначала выполните `supabase/schema.sql`, затем:
 
-## Установка
+```text
+supabase/migrations/20261004_marketapp.sql
+```
 
-1. Создайте Supabase-проект и выполните [schema.sql](supabase/schema.sql).
-2. Скопируйте `.env.example` в `.env`, заполните секреты.
-3. Установите зависимости и запустите тесты:
+Для существующего проекта достаточно применить migration. Он добавляет:
+
+- `provider`, `provider_payload`, `provider_order_id/response/tx_hash`;
+- поля GRAM и NFT-rent;
+- расширенные product constraints;
+- provider-aware claim/complete RPC с idempotency lease.
+
+Не деплойте код до применения migration: worker использует RPC
+`claim_order_fulfillment_v2` и `complete_order_fulfillment_v2`.
+
+## GRNT-style UI и фото
+
+Сохраняется карточная цепочка: главное меню → получатель/каталог → параметры →
+оплата → blockchain confirmation → loading → success/error. В `app/assets/media/`
+можно положить `main_menu`, `shop`, `recipient`, `product`, `payment_method`,
+`payment_wait`, `loading`, `success`, `error`, `orders`, `referrals`, `settings`,
+`wallet`, `rent` в GIF/MP4/PNG/JPG. Для NFT-rent бот умеет отображать remote photo
+URL из Marketapp-каталога; если URL нет, используется локальный fallback.
+
+## Идемпотентность и безопасность
+
+- incoming payment проверяется по точной сумме и memo;
+- `orders.tx_hash` уникален;
+- claim fulfillment выполняется PostgreSQL RPC под row lock;
+- у каждой попытки есть уникальный `idempotency_key` и audit record;
+- после provider/blockchain ambiguity нет автоматического повторного списания;
+- admin retry допустим только после ручной сверки provider/TON transaction.
+
+## Запуск
 
 ```bash
 python -m pip install -r requirements.txt
-pytest -q
+python main.py
 ```
 
-4. Локальный запуск: `python main.py`.
-
-Для Render приложен `render.yaml`; сервис должен иметь ровно один polling instance.
-Для горизонтального масштабирования включите webhook и задайте `APP_BASE_URL`,
-`TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_USE_POLLING=false`.
-
-## Медиа GRNT
-
-`app/assets/menu.png` перенесен из GRNT и используется как fallback. Renderer ищет
-GIF/MP4/PNG в `app/assets/media/`: `main_menu`, `shop`, `recipient`, `product`,
-`payment_method`, `payment_wait`, `loading`, `success`, `error`, `orders`,
-`referrals`, `settings`. В предоставленной сборке GRNT самих GIF не было, поэтому
-добавление файлов с этими именами автоматически активирует их без правок кода.
-
-## Fragment API
-
-`fragment-api.com` — независимый от Telegram/Fragment поставщик. Он публикует
-OpenAPI-схему по `https://api.fragment-api.com/api/schema.yaml`. Адаптер использует
-JWT Fragment Connection, `misc/user`, `order/stars`, `order/premium` и `order/{id}`.
-Перед production выполните тестовую покупку на минимальной сумме и убедитесь, что
-`TON_RECEIVER_ADDRESS` относится к ожидаемому операционному кошельку Fragment
-Connection. JWT хранится только в Render environment и никогда не записывается в
-Supabase или логи.
-
-## Эксплуатационные команды
-
-- `/admin_stats` — сводка пользователей, заказов и оборота;
-- `/approve_retry <UUID> <причина>` — только после ручной проверки Fragment;
-- `GET /health` — Supabase и состояние фоновых воркеров.
-
-Подробное сопоставление проектов находится в [MIGRATION_PLAN.md](MIGRATION_PLAN.md).
+Render-конфигурация находится в `render.yaml`. При polling должен работать ровно
+один instance; для масштабирования используйте webhook mode.

@@ -21,6 +21,7 @@ def create_dispatcher(
     dispatcher["orders"] = services.orders
     dispatcher["pricing"] = services.orders.pricing
     dispatcher["fragment"] = services.fragment
+    dispatcher["marketapp"] = services.marketapp
     dispatcher["admin"] = services.admin
     dispatcher["order_repository"] = repositories.orders
     dispatcher.include_router(create_router())

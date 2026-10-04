@@ -16,6 +16,14 @@ services:
         sync: false
       - key: TONCENTER_API_KEY
         sync: false
+      - key: MARKETAPP_API_TOKEN
+        sync: false
+      - key: MARKETAPP_WALLET_SEED
+        sync: false
+      - key: MARKETAPP_TON_API_KEY
+        sync: false
+      - key: MARKETAPP_WALLET_VERSION
+        value: "V5R1"
       - key: FRAGMENT_JWT_TOKEN
         sync: false
       - key: ADMIN_IDS
@@ -26,4 +34,3 @@ services:
         value: "15"
       - key: WORKER_INTERVAL_SECONDS
         value: "10"
-

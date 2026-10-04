@@ -7,10 +7,11 @@ from datetime import UTC, datetime
 
 from app.api.notifier import OrderNotifier
 from app.config import Settings
-from app.core.enums import Currency
-from app.core.exceptions import FragmentAmbiguousError, FragmentRejectedError
+from app.core.enums import Currency, OrderProvider
+from app.core.exceptions import ProviderAmbiguousError, ProviderRejectedError
 from app.repositories.orders import OrderRepository
 from app.services.fragment import FragmentService
+from app.services.marketapp import MarketappService
 from app.services.payments import PaymentService
 
 logger = logging.getLogger(__name__)
@@ -25,12 +26,14 @@ class WorkerManager:
         orders: OrderRepository,
         payments: PaymentService,
         fragment: FragmentService,
+        marketapp: MarketappService,
         notifier: OrderNotifier,
     ):
         self._settings = settings
         self._orders = orders
         self._payments = payments
         self._fragment = fragment
+        self._marketapp = marketapp
         self._notifier = notifier
         self._stop = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -48,7 +51,7 @@ class WorkerManager:
             "ton-payments": lambda: self._payment_loop(Currency.TON),
             "usdt-payments": lambda: self._payment_loop(Currency.USDT),
             "order-expiry": self._expiry_loop,
-            "fragment-fulfillment": self._fulfillment_loop,
+            "provider-fulfillment": self._fulfillment_loop,
         }
         self._tasks = {
             asyncio.create_task(worker(), name=name) for name, worker in workers.items()
@@ -137,11 +140,14 @@ class WorkerManager:
                         continue
                     order, attempt = claimed
                     await self._orders.mark_attempt_submitted(attempt.id)
+                    provider = (
+                        self._fragment
+                        if order.provider is OrderProvider.FRAGMENT
+                        else self._marketapp
+                    )
                     try:
-                        result = await self._fragment.purchase(
-                            order, attempt.idempotency_key
-                        )
-                    except FragmentRejectedError as exc:
+                        result = await provider.purchase(order, attempt.idempotency_key)
+                    except ProviderRejectedError as exc:
                         failed = await self._orders.fail_fulfillment(
                             order.id,
                             attempt.id,
@@ -151,7 +157,7 @@ class WorkerManager:
                             http_status=exc.http_status,
                         )
                         await self._notifier.order_changed(failed)
-                    except FragmentAmbiguousError as exc:
+                    except ProviderAmbiguousError as exc:
                         review = await self._orders.fail_fulfillment(
                             order.id,
                             attempt.id,
@@ -167,6 +173,7 @@ class WorkerManager:
                             attempt.id,
                             result.payload,
                             result.external_order_id,
+                            getattr(result, "tx_hash", None),
                             result.http_status,
                         )
                         await self._notifier.order_changed(completed)
@@ -175,4 +182,4 @@ class WorkerManager:
                         "Fulfillment iteration failed for order %s", pending.id
                     )
 
-        await self._repeat("fragment-fulfillment", run_once)
+        await self._repeat("provider-fulfillment", run_once)

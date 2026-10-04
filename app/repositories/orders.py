@@ -113,7 +113,7 @@ class OrderRepository:
         self, order_id: UUID, lease_seconds: int
     ) -> tuple[Order, FulfillmentAttempt] | None:
         response = await self._db.rpc(
-            "claim_order_fulfillment",
+            "claim_order_fulfillment_v2",
             {"p_order_id": str(order_id), "p_lease_seconds": lease_seconds},
         )
         if not response.data:
@@ -141,16 +141,18 @@ class OrderRepository:
         order_id: UUID,
         attempt_id: int,
         response_payload: dict[str, Any],
-        fragment_order_id: str | None,
+        provider_order_id: str | None,
+        provider_tx_hash: str | None,
         http_status: int,
     ) -> Order:
         response = await self._db.rpc(
-            "complete_order_fulfillment",
+            "complete_order_fulfillment_v2",
             {
                 "p_order_id": str(order_id),
                 "p_attempt_id": attempt_id,
                 "p_response": response_payload,
-                "p_fragment_order_id": fragment_order_id,
+                "p_provider_order_id": provider_order_id,
+                "p_provider_tx_hash": provider_tx_hash,
                 "p_http_status": http_status,
             },
         )

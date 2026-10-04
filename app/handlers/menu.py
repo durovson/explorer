@@ -11,6 +11,7 @@ from app.config import Settings
 from app.keyboards.menu import back_home, home_keyboard, orders_keyboard
 from app.models.entities import Order, User
 from app.repositories.orders import OrderRepository
+from app.services.marketapp import MarketappService
 from app.services.referrals import ReferralService
 from app.utils.media import render_card, send_card
 
@@ -19,11 +20,10 @@ router = Router(name="menu")
 
 def _home_text() -> str:
     return (
-        "<b>Stars & Premium</b>\n\n"
-        "Покупка Telegram Stars и Premium через Fragment.\n\n"
-        "💎 Оплата только TON или USDT в сети TON.\n"
-        "Каждый заказ оплачивается отдельной прямой транзакцией — "
-        "внутреннего баланса нет."
+        "<b>Marketapp Shop</b>\n\n"
+        "Stars, Premium, GRAM и аренда Telegram NFT через Marketapp.\n\n"
+        "💎 Входящая оплата подтверждается непосредственно в блокчейне TON.\n"
+        "После подтверждения Marketapp-операция оплачивается settlement-кошельком в GRAM."
     )
 
 
@@ -96,7 +96,7 @@ def _order_line(order: Order) -> str:
     return (
         f"<code>{str(order.id)[:8]}</code> · {escape(order.item_label)} → "
         f"<b>{escape(order.recipient)}</b>\n"
-        f"{amount} {order.currency.value} · {order.status.value}"
+        f"{amount} {order.currency.value} · {order.status.value} · {order.provider.value}"
     )
 
 
@@ -129,22 +129,46 @@ async def referrals_screen(
     await callback.answer()
 
 
-@router.callback_query(F.data.in_({"about", "settings"}))
-async def info(callback: CallbackQuery) -> None:
-    if callback.data == "about":
-        text = (
-            "<b>🚀 О проекте</b>\n\n"
-            "Заказ создается в Supabase, платеж подтверждается в блокчейне TON, "
-            "после чего бот автоматически отправляет покупку в Fragment."
-        )
-        screen = "settings"
-    else:
-        text = (
-            "<b>⚙ Настройки</b>\n\n"
-            "В этой версии нет внутреннего баланса, пополнения и "
-            "сохраненных платежных реквизитов."
-        )
-        screen = "settings"
+@router.callback_query(F.data == "wallet")
+async def wallet(callback: CallbackQuery, settings: Settings) -> None:
+    text = (
+        "<b>👛 Кошелёк</b>\n\n"
+        "Адрес приёма платежей TON/USDT:\n"
+        f"<code>{escape(settings.TON_RECEIVER_ADDRESS)}</code>\n\n"
+        "Каждый заказ получает уникальный memo. Переводы без memo не засчитываются автоматически.\n\n"
+        "Settlement Marketapp хранится отдельно и используется только для исполнения заказов в GRAM."
+    )
     if callback.message:
-        await render_card(callback.message, text, back_home(), screen)
+        await render_card(callback.message, text, back_home(), "wallet")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "settings")
+async def settings_screen(
+    callback: CallbackQuery, settings: Settings, marketapp: MarketappService
+) -> None:
+    api = "✅" if marketapp.enabled else "❌"
+    signer = "✅" if marketapp.auto_pay_configured and settings.marketapp_ton_api_key else "❌"
+    text = (
+        "<b>⚙ Настройки</b>\n\n"
+        f"Marketapp API: <b>{api}</b>\n"
+        f"Blockchain auto-pay: <b>{signer}</b>\n"
+        f"Wallet version: <b>{escape(settings.MARKETAPP_WALLET_VERSION)}</b>\n\n"
+        "Секреты API и seed не отображаются и не сохраняются в Supabase/логах."
+    )
+    if callback.message:
+        await render_card(callback.message, text, back_home(), "settings")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "about")
+async def about(callback: CallbackQuery) -> None:
+    text = (
+        "<b>🚀 О проекте</b>\n\n"
+        "Заказ создаётся в Supabase, входящий платёж подтверждается в TON, затем "
+        "Marketapp формирует операцию, а выделенный settlement-кошелёк подписывает "
+        "и отправляет blockchain-транзакцию. Неоднозначный результат не повторяется автоматически."
+    )
+    if callback.message:
+        await render_card(callback.message, text, back_home(), "settings")
     await callback.answer()

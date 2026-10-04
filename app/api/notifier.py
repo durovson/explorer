@@ -6,7 +6,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 
 from app.config import Settings
-from app.core.enums import OrderStatus
+from app.core.enums import OrderProvider, OrderStatus
 from app.models.entities import Order
 from app.utils.media import edit_card
 
@@ -21,20 +21,26 @@ class OrderNotifier:
     async def order_changed(self, order: Order) -> None:
         if not order.bot_chat_id or not order.bot_message_id:
             return
+        provider = "Fragment" if order.provider is OrderProvider.FRAGMENT else "Marketapp"
         if order.status is OrderStatus.PAYMENT_CONFIRMED:
             screen = "loading"
             caption = (
                 "✅ <b>Платеж подтвержден в блокчейне</b>\n\n"
                 f"{order.item_label} для <b>{order.recipient}</b>\n\n"
-                "Покупаем через Fragment…"
+                f"Исполняем через {provider}…"
             )
             keyboard = None
         elif order.status is OrderStatus.COMPLETED:
             screen = "success"
+            tx_line = (
+                f"\nTX: <code>{order.provider_tx_hash[:18]}…</code>"
+                if order.provider_tx_hash
+                else ""
+            )
             caption = (
                 "✅ <b>Заказ выполнен</b>\n\n"
                 f"{order.item_label}\nПолучатель: <b>{order.recipient}</b>\n\n"
-                f"Заказ: <code>{str(order.id)[:8]}</code>"
+                f"Заказ: <code>{str(order.id)[:8]}</code>{tx_line}"
             )
             from app.keyboards.menu import completed_keyboard
 
@@ -53,7 +59,8 @@ class OrderNotifier:
             caption = (
                 "⚠️ <b>Оплата сохранена, нужна проверка</b>\n\n"
                 f"Заказ: <code>{order.id}</code>\n"
-                "Повторно платить не нужно. Поддержка проверит исполнение Fragment."
+                f"Провайдер: <b>{provider}</b>\n"
+                "Повторно платить не нужно. Поддержка проверит исполнение и blockchain TX."
             )
             from app.keyboards.menu import support_keyboard
 

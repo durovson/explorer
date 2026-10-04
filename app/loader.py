@@ -17,6 +17,7 @@ from app.repositories import Repositories
 from app.services import (
     AdminService,
     FragmentService,
+    MarketappService,
     OrderService,
     PaymentService,
     ReferralService,
@@ -42,6 +43,7 @@ class Container:
         await self.workers.stop()
         await self.services.payments.close()
         await self.services.fragment.close()
+        await self.services.marketapp.close()
         await self.storage.close()
         await self.bot.session.close()
         await self.database.close()
@@ -67,15 +69,17 @@ async def build_container(settings: Settings) -> Container:
     orders = OrderService(settings, repositories.orders, pricing)
     payments = PaymentService(settings)
     fragment = FragmentService(settings)
+    marketapp = MarketappService(settings)
     referrals = ReferralService(repositories.users)
     admin = AdminService(settings, repositories.admin, repositories.orders)
-    services = Services(users, orders, payments, fragment, referrals, admin)
+    services = Services(users, orders, payments, fragment, marketapp, referrals, admin)
     dispatcher = create_dispatcher(settings, storage, repositories, services)
     workers = WorkerManager(
         settings,
         repositories.orders,
         payments,
         fragment,
+        marketapp,
         OrderNotifier(bot, settings),
     )
     return Container(

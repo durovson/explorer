@@ -6,18 +6,25 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 def home_keyboard(support_url: str, admin: bool = False) -> InlineKeyboardMarkup:
     rows = [
         [
-            InlineKeyboardButton(text="⭐ Купить Stars", callback_data="buy:STARS"),
-            InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy:PREMIUM"),
+            InlineKeyboardButton(text="⭐ Stars", callback_data="buy:STARS"),
+            InlineKeyboardButton(text="💎 Premium", callback_data="buy:PREMIUM"),
         ],
         [
+            InlineKeyboardButton(text="◈ GRAM", callback_data="buy:GRAM"),
+            InlineKeyboardButton(text="🎁 Аренда NFT", callback_data="rent:0"),
+        ],
+        [
+            InlineKeyboardButton(text="👛 Кошелёк", callback_data="wallet"),
             InlineKeyboardButton(text="📋 Мои заказы", callback_data="orders:0"),
+        ],
+        [
             InlineKeyboardButton(text="🎁 Друзья", callback_data="referrals"),
+            InlineKeyboardButton(text="⚙ Настройки", callback_data="settings"),
         ],
         [
             InlineKeyboardButton(text="🚀 О проекте", callback_data="about"),
             InlineKeyboardButton(text="💬 Поддержка", url=support_url),
         ],
-        [InlineKeyboardButton(text="⚙ Настройки", callback_data="settings")],
     ]
     if admin:
         rows.append([InlineKeyboardButton(text="🛠 Админ", callback_data="admin:stats")])
@@ -56,7 +63,7 @@ def product_options(product: str) -> InlineKeyboardMarkup:
         rows.append(
             [InlineKeyboardButton(text="✏ Ввести своё", callback_data="amount:custom")]
         )
-    else:
+    elif product == "PREMIUM":
         rows = [
             [
                 InlineKeyboardButton(
@@ -68,35 +75,68 @@ def product_options(product: str) -> InlineKeyboardMarkup:
             ]
             for months in (3, 6, 12)
         ]
+    else:
+        values = (1, 5, 10, 25, 50, 100)
+        rows = [
+            [
+                InlineKeyboardButton(text=f"◈ {values[i]} GRAM", callback_data=f"gram:{values[i]}"),
+                InlineKeyboardButton(text=f"◈ {values[i + 1]} GRAM", callback_data=f"gram:{values[i + 1]}"),
+            ]
+            for i in range(0, len(values), 2)
+        ]
+        rows.append(
+            [InlineKeyboardButton(text="✏ Ввести своё", callback_data="gram:custom")]
+        )
     rows.append(
         [InlineKeyboardButton(text="← Получатель", callback_data=f"buy:{product}")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def currency_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="💎 TON", callback_data="currency:TON")],
+def currency_keyboard(ton_only: bool = False) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text="💎 TON", callback_data="currency:TON")]]
+    if not ton_only:
+        rows.append(
             [
                 InlineKeyboardButton(
                     text="💵 USDT (сеть TON)", callback_data="currency:USDT"
                 )
-            ],
-            [InlineKeyboardButton(text="← Назад", callback_data="options")],
-        ]
-    )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="← Назад", callback_data="options")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def payment_keyboard(payment_url: str, order_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="💎 Оплатить через кошелёк", url=payment_url)],
-            [
-                InlineKeyboardButton(
-                    text="✕ Отменить", callback_data=f"cancel:{order_id}"
-                )
-            ],
+            [InlineKeyboardButton(text="✕ Отменить", callback_data=f"cancel:{order_id}")],
+        ]
+    )
+
+
+def rent_keyboard(page: int, offers_count: int, has_next: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=f"🎁 NFT #{i + 1}", callback_data=f"rentpick:{i}")]
+        for i in range(offers_count)
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="←", callback_data=f"rent:{page - 1}"))
+    if has_next:
+        nav.append(InlineKeyboardButton(text="→", callback_data=f"rent:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="← Главное меню", callback_data="home")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rent_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Арендовать", callback_data="rentconfirm")],
+            [InlineKeyboardButton(text="← Каталог", callback_data="rent:0")],
         ]
     )
 
