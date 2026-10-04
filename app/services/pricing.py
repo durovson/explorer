@@ -42,13 +42,17 @@ class PriceService:
         if product is ProductType.GRAM:
             if currency is not Currency.TON:
                 raise ValueError("Пополнение GRAM сейчас оплачивается только TON")
-            if gram_amount is None or not (
-                self._settings.MARKETAPP_GRAM_MIN
-                <= gram_amount
-                <= self._settings.MARKETAPP_GRAM_MAX
+            if (
+                gram_amount is None
+                or gram_amount != gram_amount.to_integral_value()
+                or not (
+                    self._settings.MARKETAPP_GRAM_MIN
+                    <= gram_amount
+                    <= self._settings.MARKETAPP_GRAM_MAX
+                )
             ):
                 raise ValueError(
-                    f"GRAM должен быть от {self._settings.MARKETAPP_GRAM_MIN} "
+                    f"GRAM должен быть целым числом от {self._settings.MARKETAPP_GRAM_MIN} "
                     f"до {self._settings.MARKETAPP_GRAM_MAX}"
                 )
             return (gram_amount * self._settings.MARKETAPP_GRAM_MARKUP).quantize(
