@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     healthCheckPath: /health
-    autoDeployTrigger: commit
+    autoDeployTrigger: checksPass
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
     envVars:
