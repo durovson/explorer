@@ -1,80 +1,56 @@
-# Stars & Premium Shop
+# Stars & Premium — Telegram Serverless
 
-Telegram-бот на Python/aiogram 3 для прямой продажи Telegram Stars и Premium через
-Fragment. Пользователь не пополняет счет: каждый заказ — отдельный платеж на
-специальный TON-кошелек.
-
-## Архитектура
+Отдельный проект на JavaScript для [Telegram Serverless](https://core.telegram.org/bots/serverless). Исходная архитектура [durovson/explorer](https://github.com/durovson/explorer) переписана с Python/aiogram, внешней БД и постоянно работающих воркеров на native V8 modules и встроенную SQLite Telegram. Код Python, Render, Supabase, Redis и медиа в этот проект не входят.
 
 ```text
-app/
-├── api/            # FastAPI health/webhook и Telegram notifications
-├── core/           # enums, exceptions
-├── database/       # асинхронная граница Supabase
-├── handlers/       # тонкие aiogram handlers
-├── keyboards/      # inline UI
-├── middleware/     # создание/получение пользователя
-├── models/         # Pydantic entities
-├── repositories/   # Supabase/PostgREST и RPC
-├── services/       # заказы, цены, TON/USDT, Fragment, рефералы, admin
-├── states/         # только не финансовый FSM ввода
-├── tasks/          # независимые payment/expiry/fulfillment workers
-└── utils/          # GRNT-style media renderer
+tgcloud/
+  handlers/message.js         /start и ввод получателя/количества
+  handlers/callback_query.js  кнопки, счета и проверка оплаты
+  schema.js                  пользователи, сессии, заказы
+  lib/bot.js                 сценарии магазина
+  lib/ui.js                  только текстовые экраны
+  lib/pricing.js             точные суммы и явные комиссии
+  lib/fragment-prices.js     актуальная публичная цена Fragment
+  lib/amounts.js              BigInt, TON адреса, проверка доказательства оплаты
+  lib/chain.js                поиск TON/USDT транзакций через Toncenter V3
+  lib/store.js                SQLite и атомарные переходы
+  lib/fulfillment.js          выдача через поставщика Fragment API
+  lib/config.js              настройки оператора
+scripts/                     подготовка конфигурации и проверка runtime
+tests/                       финансовые и сценарные тесты с настоящей SQLite
 ```
 
-Финансовое состояние находится только в Supabase. FSM хранит лишь временные поля
-мастера покупки и никогда не подтверждает оплату.
+Установка: Node.js 22.13+ для локальных тестов (CLI требует 18+), `npm ci`. Скопируйте `config/operator.example.json` в `config/operator.json`, выполните `npm run configure`, затем `npm test` и `npm run check`. Шаблон содержит сравнительные ставки надбавки и дает безопасный просмотр меню с выключенными продажами. Бот в облаке не использует Node/npm dependencies. CLI зафиксирован на `@tgcloud/cli@0.2.0`; lockfile приложен. Деплой и подключение: [docs/DEPLOY.md](docs/DEPLOY.md).
 
-## Гарантии платежа и идемпотентности
+## Что работает
 
-- валюта ограничена `TON` и `USDT`; master USDT жестко проверяется конфигурацией;
-- для входящего перевода должны совпасть destination, asset, atomic amount и memo;
-- `tx_hash` уникален в БД, поэтому одна транзакция не оплатит два заказа;
-- подтверждение платежа и история статуса записываются одной PostgreSQL RPC;
-- Fragment-попытка имеет внутренний уникальный ключ и отдельный audit record; ключ
-  также отправляется поставщику как `Idempotency-Key`, но безопасность не зависит
-  от поддержки этого недокументированного request-header;
-- неоднозначный ответ никогда не повторяется автоматически.
+- Stars 50–1 000 000 и Premium 3/6/12 месяцев: себе или по @username.
+- Отдельный счет на каждый заказ, TON/USDT в TON mainnet, точный комментарий и срок оплаты.
+- Мои заказы, постоянное состояние диалога, приглашения друзей, поддержка и настройки комиссий.
+- Проверка оплаты кнопкой и при открытии заказа; подтвержденный платеж запускает выдачу.
+- Цена Stars на Fragment, надбавка, дополнительная комиссия и итог сохраняются в заказе. Суммы вычисляются в атомарных единицах без floating point.
 
-## Установка
+## Защита платежей
 
-1. Создайте Supabase-проект и выполните [schema.sql](supabase/schema.sql).
-2. Скопируйте `.env.example` в `.env`, заполните секреты.
-3. Установите зависимости и запустите тесты:
+При проверке должны совпасть адрес, актив, сумма, memo и время транзакции. Сумма не может быть округлена или недоплачена. Для USDT проверяется официальный master и успешная транзакция зачисления в jetton-кошелек получателя, связанная с исходящим сообщением. Toncenter используется как доверенный mainnet индексатор; это не независимая light-client проверка консенсуса. Поврежденные ответы, незавершенные traces и неполное окно поиска не подтверждают оплату.
 
-```bash
-python -m pip install -r requirements.txt
-pytest -q
-```
+Уникальный txHash не позволяет оплатить два заказа одной транзакцией. Изменение количества/получателя создает новую версию счета, повторное нажатие одной валюты возвращает прежний счет. Адрес ранее выданного счета сохраняется при смене рабочего кошелька. Счет остается доступным для поиска отправленного вовремя платежа после истечения TTL и при задержке индексатора; новые переводы после TTL не принимаются автоматически.
 
-4. Локальный запуск: `python main.py`.
+Перед покупкой у поставщика SQLite атомарно переводит оплаченный заказ в FULFILLING. Конкурентные вызовы не отправят второй POST. Неоднозначный ответ переводит заказ в REVIEW; повторный POST автоматически не выполняется. При известном id поставщика состояние сверяется через GET. Поддержка должна вручную сверить неизвестный результат или оплаченный FAILED-заказ перед возвратом/дальнейшими действиями. Реферальные ссылки учитываются, денежные бонусы не начисляются без отдельной программы.
 
-Для Render приложен `render.yaml`; сервис должен иметь ровно один polling instance.
-Для горизонтального масштабирования включите webhook и задайте `APP_BASE_URL`,
-`TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_USE_POLLING=false`.
+## Что нужно для запуска
 
-## Медиа GRNT
+Собственные кошелек TON, Toncenter API key, Fragment Connection JWT, username/контакт поддержки, подтвержденные тарифы и Serverless CLI access из BotFather. Поставщик `fragment-api.com` независим от Telegram/Fragment; используется подтвержденная [OpenAPI-схема](https://api.fragment-api.com/api/schema.yaml). Следует отдельно проверить, что receiving wallet и Fragment Connection финансируют нужный операционный счет. Бот не хранит seed phrase и не управляет переводом средств пользователя.
 
-`app/assets/menu.png` перенесен из GRNT и используется как fallback. Renderer ищет
-GIF/MP4/PNG в `app/assets/media/`: `main_menu`, `shop`, `recipient`, `product`,
-`payment_method`, `payment_wait`, `loading`, `success`, `error`, `orders`,
-`referrals`, `settings`. В предоставленной сборке GRNT самих GIF не было, поэтому
-добавление файлов с этими именами автоматически активирует их без правок кода.
+Надбавка рассчитана сравнением цены @TheOpenMoneyBot с [Fragment](https://fragment.com/stars/buy): примерно **5,28% в TON** и **25,33% в USDT к долларовой цене Stars**, дополнительная комиссия 0. Это эффективная разница итоговых цен, а не раскрытая структура расходов чужого сервиса. Точные дробные коэффициенты воспроизводят наблюдавшиеся 100 Stars = 1,0769 TON / 1,88 USDT на базе сравнительного снимка. Расчет и даты — в [docs/REFERENCE-BOT.md](docs/REFERENCE-BOT.md).
 
-## Fragment API
+При `priceSource: "fragment"` перед выбором валюты запрашивается свежая публичная цена Fragment. Для USDT явно используется долларовый номинал по курсу 1 USD = 1 USDT; это не подтвержденный USDT checkout Fragment. Если источник недоступен или формат изменился, новый счет не выдается. Интерфейс публичного сайта не является стабильным опубликованным API; проверка в облаке перед запуском обязательна. Ставка надбавки сохраняется, итог в TON меняется с курсом. Устаревшие кнопки выбора цены не создают счет по новой сессии. Продажи закрыты до заполнения собственных ключей и кошелька; Premium требует настройки собственных тарифов.
 
-`fragment-api.com` — независимый от Telegram/Fragment поставщик. Он публикует
-OpenAPI-схему по `https://api.fragment-api.com/api/schema.yaml`. Адаптер использует
-JWT Fragment Connection, `misc/user`, `order/stars`, `order/premium` и `order/{id}`.
-Перед production выполните тестовую покупку на минимальной сумме и убедитесь, что
-`TON_RECEIVER_ADDRESS` относится к ожидаемому операционному кошельку Fragment
-Connection. JWT хранится только в Render environment и никогда не записывается в
-Supabase или логи.
+Serverless не документирует cron/timers или runtime secrets/env API. Поэтому здесь нет выдуманного планировщика: проверка запускается действиями пользователя, а private backend config генерируется локально и исключен из Git. Отсутствие следующего действия пользователя означает отсутствие автоматического нового скана. Развертывание, миграция старых реальных данных и оплаченная end-to-end покупка в этой сборке не выполнялись. `tgcloud run` работает с реальной облачной БД/API; локальные тесты используют изолированный adapter и не отправляют платежи.
 
-## Эксплуатационные команды
+## Источники
 
-- `/admin_stats` — сводка пользователей, заказов и оборота;
-- `/approve_retry <UUID> <причина>` — только после ручной проверки Fragment;
-- `GET /health` — Supabase и состояние фоновых воркеров.
-
-Подробное сопоставление проектов находится в [MIGRATION_PLAN.md](MIGRATION_PLAN.md).
+- [Telegram Serverless](https://core.telegram.org/bots/serverless), SDK reference из официального CLI сохранен в docs/tgcloud-sdk.md.
+- [Toncenter V3 OpenAPI](https://toncenter.com/api/v3/doc.json).
+- [Обработка jettons в TON](https://docs.ton.org/v3/guidelines/dapps/asset-processing/jettons).
+- [Исходный проект](https://github.com/durovson/explorer).

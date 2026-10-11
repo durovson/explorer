@@ -1,0 +1,17 @@
+{
+  "name": "stars-premium-telegram-serverless",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "test": "node --import ./tests/register.mjs --test tests/*.test.js",
+    "check": "node scripts/check-runtime.mjs",
+    "configure": "node scripts/configure.mjs",
+    "deploy": "npm run configure && npm run check && tgcloud push",
+    "status": "tgcloud status",
+    "migrate": "tgcloud migrate",
+    "run": "tgcloud run"
+  },
+  "devDependencies": { "@tgcloud/cli": "0.2.0" }
+}

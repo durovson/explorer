@@ -1,7 +1,6 @@
+.tgcloud/
+node_modules/
+config/operator.json
+tgcloud/lib/operator-config.js
 .env
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.ruff_cache/
-.venv/
-
+*.log

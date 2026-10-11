@@ -1,1 +1,0 @@
-"""Stars & Premium shop application."""
