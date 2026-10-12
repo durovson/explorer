@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from time import monotonic
 from typing import Any
 
 import httpx
@@ -68,6 +71,30 @@ def jetton_comment(transfer: dict[str, Any]) -> str:
     return _decode_text(transfer.get("comment"))
 
 
+class SlidingWindowRateLimiter:
+    """Process-wide limiter for both TON Center v2 and v3 requests."""
+
+    def __init__(self, requests_per_second: int):
+        self._limit = requests_per_second
+        self._lock = asyncio.Lock()
+        self._timestamps: deque[float] = deque()
+
+    async def acquire(self) -> None:
+        async with self._lock:
+            while True:
+                now = monotonic()
+                while self._timestamps and now - self._timestamps[0] >= 1.0:
+                    self._timestamps.popleft()
+                if len(self._timestamps) < self._limit:
+                    self._timestamps.append(now)
+                    return
+                delay = 1.0 - (now - self._timestamps[0])
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                else:
+                    self._timestamps.popleft()
+
+
 @dataclass(frozen=True, slots=True)
 class IncomingPayment:
     currency: Currency
@@ -84,6 +111,9 @@ class PaymentService:
     def __init__(self, settings: Settings):
         self._settings = settings
         self._client = httpx.AsyncClient(timeout=20)
+        self._toncenter_limiter = SlidingWindowRateLimiter(
+            settings.TONCENTER_RPS_LIMIT
+        )
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -95,6 +125,16 @@ class PaymentService:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    async def _toncenter_get(
+        self,
+        url: str,
+        *,
+        params: dict[str, Any],
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        await self._toncenter_limiter.acquire()
+        return await self._client.get(url, params=params, headers=headers)
 
     async def scan(
         self, currency: Currency, oldest: datetime | None = None
@@ -121,7 +161,7 @@ class PaymentService:
             }
             if self._settings.TONCENTER_API_KEY:
                 params["api_key"] = self._settings.TONCENTER_API_KEY
-            response = await self._client.get(
+            response = await self._toncenter_get(
                 f"{self._settings.TONCENTER_V2_URL.rstrip('/')}/getTransactions",
                 params=params,
             )
@@ -178,7 +218,7 @@ class PaymentService:
             }
             if oldest:
                 params["start_utime"] = int(oldest.timestamp()) - 30
-            response = await self._client.get(
+            response = await self._toncenter_get(
                 f"{self._settings.TONCENTER_V3_URL.rstrip('/')}/jetton/transfers",
                 params=params,
                 headers=self._headers,
