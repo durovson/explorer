@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     TONCENTER_API_KEY: str
     TONCENTER_V2_URL: str = "https://toncenter.com/api/v2"
     TONCENTER_V3_URL: str = "https://toncenter.com/api/v3"
+    TONCENTER_RPS_LIMIT: int = Field(default=10, ge=1, le=10)
     USDT_MASTER_ADDRESS: str = OFFICIAL_USDT_MASTER
     PAYMENT_TTL_MINUTES: int = Field(default=15, ge=5, le=60)
     WORKER_INTERVAL_SECONDS: int = Field(default=10, ge=3, le=300)
