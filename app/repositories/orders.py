@@ -7,7 +7,7 @@ from uuid import UUID
 from app.core.enums import Currency, FulfillmentAttemptStatus, OrderStatus
 from app.core.exceptions import ConcurrentUpdateError
 from app.database import SupabaseDatabase
-from app.models.entities import FulfillmentAttempt, Order
+from app.models.entities import FulfillmentAttempt, Order, ShopStats
 
 
 class OrderRepository:
@@ -23,6 +23,10 @@ class OrderRepository:
             lambda client: client.table("orders").insert(values).execute()
         )
         return self._order(response.data[0])
+
+    async def shop_stats(self) -> ShopStats:
+        response = await self._db.rpc("shop_public_stats", {})
+        return ShopStats.model_validate(response.data[0] if response.data else {})
 
     async def get(self, order_id: UUID) -> Order | None:
         response = await self._db.run(
