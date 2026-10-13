@@ -43,6 +43,6 @@ class UserRepository:
         return bool(response.data)
 
     async def referral_stats(self, telegram_id: int) -> ReferralStats:
-        response = await self._db.rpc("referral_stats", {"p_user_id": telegram_id})
+        response = await self._db.rpc("referral_stats_v2", {"p_user_id": telegram_id})
         data = response.data[0] if response.data else {}
         return ReferralStats.model_validate(data)
