@@ -9,13 +9,19 @@ from decimal import Decimal
 from app.api.notifier import OrderNotifier
 from app.config import Settings
 from app.core.enums import Currency
-from app.core.exceptions import FragmentAmbiguousError, FragmentRejectedError
+from app.core.exceptions import (
+    FragmentAmbiguousError,
+    FragmentRejectedError,
+    FragmentTemporaryError,
+)
 from app.repositories.orders import OrderRepository
+from app.repositories.payments import PaymentRepository
 from app.services.fragment import FragmentService
 from app.services.payments import PaymentService
 from app.services.settlement import SettlementService
 
 logger = logging.getLogger(__name__)
+_TON_SCANNER = "ton-receiver-v1"
 
 
 class WorkerManager:
@@ -25,6 +31,7 @@ class WorkerManager:
         self,
         settings: Settings,
         orders: OrderRepository,
+        payment_events: PaymentRepository,
         payments: PaymentService,
         fragment: FragmentService,
         settlement: SettlementService,
@@ -32,6 +39,7 @@ class WorkerManager:
     ):
         self._settings = settings
         self._orders = orders
+        self._payment_events = payment_events
         self._payments = payments
         self._fragment = fragment
         self._settlement = settlement
@@ -49,11 +57,10 @@ class WorkerManager:
             return
         self._stop.clear()
         workers = {
-            "ton-payments": lambda: self._payment_loop(Currency.TON),
-            # Kept for legacy USDT orders only; new checkout is TON-only.
-            "usdt-payments": lambda: self._payment_loop(Currency.USDT),
+            "ton-payments": self._ton_payment_loop,
+            "usdt-payments": lambda: self._legacy_payment_loop(Currency.USDT),
             "order-expiry": self._expiry_loop,
-            "fragment-fulfillment": self._fulfillment_loop,
+            "marketapp-fulfillment": self._fulfillment_loop,
         }
         self._tasks = {
             asyncio.create_task(worker(), name=name) for name, worker in workers.items()
@@ -80,21 +87,64 @@ class WorkerManager:
             except Exception:
                 failures += 1
                 delay = min(delay * 2 ** min(failures, 5), 300)
-                logger.exception(
-                    "Worker %s iteration failed; retry in %ss", name, delay
-                )
+                logger.exception("Worker %s iteration failed; retry in %ss", name, delay)
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
             except TimeoutError:
                 pass
 
-    async def _payment_loop(self, currency: Currency) -> None:
+    async def _ton_payment_loop(self) -> None:
+        async def run_once() -> None:
+            cursor = await self._payment_events.get_cursor(_TON_SCANNER)
+            open_orders = await self._orders.list_open(
+                Currency.TON, self._settings.ORDER_BATCH_SIZE
+            )
+            if cursor is None and not open_orders:
+                return
+            oldest = min((order.created_at for order in open_orders), default=None)
+            batch = await self._payments.scan_ton_since(
+                cursor.last_lt if cursor else None,
+                cursor.last_hash if cursor else None,
+                oldest=oldest if cursor is None else None,
+            )
+            for payment in batch.payments:
+                try:
+                    order, matched, reason = await self._payment_events.ingest_ton(
+                        tx_hash=payment.tx_hash,
+                        tx_lt=payment.tx_lt,
+                        amount_atomic=payment.amount_atomic,
+                        destination=payment.destination,
+                        sender=payment.sender,
+                        memo=payment.memo,
+                        timestamp=payment.timestamp,
+                    )
+                    if matched and order is not None:
+                        await self._notifier.order_changed(order)
+                    elif reason not in {"unknown_memo", "already_processed"}:
+                        logger.info(
+                            "Observed TON deposit was not matched: tx=%s reason=%s",
+                            payment.tx_hash,
+                            reason,
+                        )
+                except Exception:
+                    logger.exception("Could not ingest TON payment %s", payment.tx_hash)
+                    raise
+
+            if batch.newest_lt is not None:
+                await self._payment_events.save_cursor(
+                    _TON_SCANNER,
+                    self._settings.TON_RECEIVER_ADDRESS,
+                    batch.newest_lt,
+                    batch.newest_hash,
+                )
+
+        await self._repeat("ton-payments", run_once)
+
+    async def _legacy_payment_loop(self, currency: Currency) -> None:
         name = f"{currency.value.lower()}-payments"
 
         async def run_once() -> None:
-            orders = await self._orders.list_open(
-                currency, self._settings.ORDER_BATCH_SIZE
-            )
+            orders = await self._orders.list_open(currency, self._settings.ORDER_BATCH_SIZE)
             if not orders:
                 return
             payments = await self._payments.scan(
@@ -129,27 +179,22 @@ class WorkerManager:
 
         await self._repeat("order-expiry", run_once)
 
-    async def _sweep_profit(
-        self,
-        order,
-        provider_debit_ton: Decimal | None,
-    ) -> None:
+    async def _sweep_profit(self, order, provider_debit_ton: Decimal | None) -> None:
         if order.currency is not Currency.TON:
             return
-        provider_cost = provider_debit_ton or order.provider_cost_ton
-        if provider_cost is None:
+        if provider_debit_ton is None:
             logger.warning(
-                "No provider cost available for order %s; profit sweep requires review",
+                "Marketapp did not expose an exact wallet debit for order %s; service margin stays in the operational wallet",
                 order.id,
             )
             return
-        margin = order.amount - provider_cost
+        margin = order.amount - provider_debit_ton
         if margin <= 0:
             logger.warning(
-                "No positive realized margin for order %s: paid=%s provider=%s",
+                "No positive realized margin for order %s: paid=%s provider_debit=%s",
                 order.id,
                 order.amount,
-                provider_cost,
+                provider_debit_ton,
             )
             return
         margin = margin.quantize(Decimal("0.000000001"))
@@ -158,8 +203,6 @@ class WorkerManager:
         try:
             message_hash = await self._settlement.transfer_profit(order.id, margin)
         except Exception as exc:
-            # A send may already have reached the network. Never auto-retry an
-            # ambiguous settlement; require on-chain verification first.
             await self._orders.fail_profit_sweep(order.id, str(exc))
             logger.exception("Profit sweep requires manual review for %s", order.id)
             return
@@ -180,8 +223,17 @@ class WorkerManager:
                     order, attempt = claimed
                     await self._orders.mark_attempt_submitted(attempt.id)
                     try:
-                        result = await self._fragment.purchase(
-                            order, attempt.idempotency_key
+                        result = await self._fragment.purchase(order, attempt.idempotency_key)
+                    except FragmentTemporaryError as exc:
+                        retry = await self._orders.retry_fulfillment(
+                            order.id,
+                            attempt.id,
+                            error=str(exc),
+                            response_payload=exc.response,
+                            retry_seconds=exc.retry_after_seconds,
+                        )
+                        logger.info(
+                            "Marketapp purchase deferred for order %s: %s", retry.id, exc
                         )
                     except FragmentRejectedError as exc:
                         failed = await self._orders.fail_fulfillment(
@@ -218,4 +270,4 @@ class WorkerManager:
                         "Fulfillment iteration failed for order %s", pending.id
                     )
 
-        await self._repeat("fragment-fulfillment", run_once)
+        await self._repeat("marketapp-fulfillment", run_once)

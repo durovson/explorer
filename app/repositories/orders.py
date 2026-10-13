@@ -93,11 +93,24 @@ class OrderRepository:
                 .select("*")
                 .eq("status", OrderStatus.PAYMENT_CONFIRMED.value)
                 .order("paid_at")
-                .limit(limit)
+                .limit(max(limit * 3, limit))
                 .execute()
             )
         )
-        return [self._order(row) for row in response.data or []]
+        now = datetime.now(UTC)
+        ready: list[Order] = []
+        for row in response.data or []:
+            order = self._order(row)
+            retry_at = order.processing_lease_until
+            if retry_at is not None:
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=UTC)
+                if retry_at > now:
+                    continue
+            ready.append(order)
+            if len(ready) >= limit:
+                break
+        return ready
 
     async def confirm_payment(
         self, order_id: UUID, tx_hash: str, tx_lt: int | None, sender: str | None
@@ -177,6 +190,29 @@ class OrderRepository:
         )
         if not response.data:
             raise ConcurrentUpdateError("Order fulfillment completion lost its claim")
+        return self._order(response.data[0])
+
+    async def retry_fulfillment(
+        self,
+        order_id: UUID,
+        attempt_id: int,
+        *,
+        error: str,
+        response_payload: dict[str, Any] | None,
+        retry_seconds: int,
+    ) -> Order:
+        response = await self._db.rpc(
+            "retry_order_fulfillment",
+            {
+                "p_order_id": str(order_id),
+                "p_attempt_id": attempt_id,
+                "p_error": error[:4000],
+                "p_response": response_payload,
+                "p_retry_seconds": retry_seconds,
+            },
+        )
+        if not response.data:
+            raise ConcurrentUpdateError("Order fulfillment retry lost its claim")
         return self._order(response.data[0])
 
     async def claim_profit_sweep(self, order_id: UUID, amount: Decimal) -> bool:

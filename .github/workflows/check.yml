@@ -1,0 +1,32 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m compileall -q app
+      - name: Import payment and navigation paths
+        run: |
+          python - <<'PY'
+          from app.core.exceptions import FragmentTemporaryError
+          from app.repositories.payments import PaymentCursor
+          from app.services.payments import PaymentScanBatch, normalize_ton_address
+          from app.utils.media import FALLBACK
+
+          assert FragmentTemporaryError("x").retry_after_seconds == 60
+          assert PaymentCursor(1, "x").last_lt == 1
+          assert PaymentScanBatch([], None, None).payments == []
+          assert normalize_ton_address("0:" + "00" * 32).startswith("0:")
+          assert FALLBACK.name == "main_menu.jpg"
+          PY

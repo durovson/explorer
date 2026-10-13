@@ -9,7 +9,11 @@ from MarketappAPI.types.models import BuyPremiumBody, BuyStarsBody, SearchRecipi
 
 from app.config import Settings
 from app.core.enums import ProductType
-from app.core.exceptions import FragmentAmbiguousError, FragmentRejectedError
+from app.core.exceptions import (
+    FragmentAmbiguousError,
+    FragmentRejectedError,
+    FragmentTemporaryError,
+)
 from app.models.entities import Order
 
 
@@ -24,7 +28,7 @@ class FragmentResult:
 
 
 class FragmentService:
-    """Purchase provider adapter; legacy class name keeps DB/RPC compatibility."""
+    """Marketapp purchase adapter; legacy class name keeps DB/RPC compatibility."""
 
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -86,6 +90,7 @@ class FragmentService:
 
     @staticmethod
     def _provider_debit(result: object, order: Order) -> Decimal | None:
+        """Return the actual wallet debit for this purchase, including chain fees."""
         before = getattr(result, "balance_before", None)
         after = getattr(result, "balance_after", None)
         if before is None or after is None:
@@ -94,10 +99,19 @@ class FragmentService:
             debit = Decimal(str(before)) - Decimal(str(after))
         except Exception:
             return None
-        # Reject values that are clearly atomic-unit balances or otherwise implausible.
-        if debit <= 0 or debit > order.amount * Decimal("2"):
+        if debit <= 0 or debit > order.amount:
             return None
-        return debit
+        return debit.quantize(Decimal("0.000000001"))
+
+    @staticmethod
+    def _is_prebroadcast_balance_error(exc: Exception) -> bool:
+        text = str(exc).lower()
+        name = type(exc).__name__.lower()
+        return (
+            "insufficient balance" in text
+            or "not enough balance" in text
+            or ("wallet" in name and "balance" in text)
+        )
 
     async def purchase(self, order: Order, idempotency_key: str) -> FragmentResult:
         username = order.recipient.lstrip("@")
@@ -114,15 +128,22 @@ class FragmentService:
                     auto_pay=True,
                 )
         except Exception as exc:
+            response = {"attempt_key": idempotency_key}
             if type(exc).__name__ == "ValidationError":
                 raise FragmentRejectedError(
                     f"Покупка отклонена: {str(exc)[:500]}",
-                    response={"attempt_key": idempotency_key},
+                    response=response,
                     http_status=422,
+                ) from exc
+            if self._is_prebroadcast_balance_error(exc):
+                raise FragmentTemporaryError(
+                    f"Средства ещё не доступны для покупки: {str(exc)[:500]}",
+                    response=response,
+                    retry_after_seconds=60,
                 ) from exc
             raise FragmentAmbiguousError(
                 f"Результат покупки требует проверки: {str(exc)[:500]}",
-                response={"attempt_key": idempotency_key},
+                response=response,
             ) from exc
 
         payload = self._payload(result, idempotency_key)

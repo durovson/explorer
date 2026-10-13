@@ -107,13 +107,26 @@ class IncomingPayment:
     timestamp: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PaymentScanBatch:
+    payments: list[IncomingPayment]
+    newest_lt: int | None
+    newest_hash: str | None
+
+
 class PaymentService:
+    """Read blockchain deposits without losing or replaying TON transactions.
+
+    TON follows the same durable-cursor pattern used by GRNT: the caller stores
+    the newest account LT/hash only after every transaction in the batch has
+    been persisted/processed. This makes restarts safe and keeps old deposits
+    from becoming new orders after a deploy.
+    """
+
     def __init__(self, settings: Settings):
         self._settings = settings
         self._client = httpx.AsyncClient(timeout=20)
-        self._toncenter_limiter = SlidingWindowRateLimiter(
-            settings.TONCENTER_RPS_LIMIT
-        )
+        self._toncenter_limiter = SlidingWindowRateLimiter(settings.TONCENTER_RPS_LIMIT)
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -139,70 +152,134 @@ class PaymentService:
     async def scan(
         self, currency: Currency, oldest: datetime | None = None
     ) -> list[IncomingPayment]:
+        """Legacy scan path retained for old USDT orders."""
         try:
-            return await (
-                self._scan_ton(oldest)
-                if currency is Currency.TON
-                else self._scan_usdt(oldest)
-            )
+            if currency is Currency.TON:
+                batch = await self.scan_ton_since(None, None, oldest=oldest)
+                return batch.payments
+            return await self._scan_usdt(oldest)
+        except PaymentProviderTemporaryError:
+            raise
         except (httpx.HTTPError, ValueError, KeyError) as exc:
             raise PaymentProviderTemporaryError(str(exc)) from exc
 
-    async def _scan_ton(self, oldest: datetime | None) -> list[IncomingPayment]:
-        payments: list[IncomingPayment] = []
-        seen: set[str] = set()
-        cursor: dict[str, Any] = {}
-        oldest_timestamp = int(oldest.timestamp()) - 30 if oldest else None
-        for _ in range(self._settings.PAYMENT_MAX_PAGES):
-            params: dict[str, Any] = {
-                "address": self._settings.TON_RECEIVER_ADDRESS,
-                "limit": min(self._settings.PAYMENT_SCAN_LIMIT, 100),
-                **cursor,
-            }
-            if self._settings.TONCENTER_API_KEY:
-                params["api_key"] = self._settings.TONCENTER_API_KEY
-            response = await self._toncenter_get(
-                f"{self._settings.TONCENTER_V2_URL.rstrip('/')}/getTransactions",
-                params=params,
-            )
-            response.raise_for_status()
-            body = response.json()
-            if not body.get("ok"):
-                raise ValueError(f"TON Center rejected request: {body}")
-            rows = body.get("result") or []
-            for tx in rows:
-                message = tx.get("in_msg") or {}
-                destination = str(message.get("destination") or "")
-                transaction_id = tx.get("transaction_id") or {}
-                tx_hash = str(transaction_id.get("hash") or "")
-                if tx_hash in seen or not same_address(
-                    destination, self._settings.TON_RECEIVER_ADDRESS
-                ):
-                    continue
-                seen.add(tx_hash)
-                payments.append(
-                    IncomingPayment(
-                        currency=Currency.TON,
-                        tx_hash=tx_hash,
-                        amount_atomic=int(message.get("value") or 0),
-                        destination=destination,
-                        memo=ton_comment(message),
-                        tx_lt=int(transaction_id.get("lt") or 0) or None,
-                        sender=str(message.get("source") or "") or None,
-                        timestamp=int(tx.get("utime") or 0) or None,
-                    )
+    async def scan_ton_since(
+        self,
+        last_lt: int | None,
+        last_hash: str | None,
+        *,
+        oldest: datetime | None = None,
+    ) -> PaymentScanBatch:
+        """Return every inbound TON transfer newer than the durable cursor."""
+        del last_hash
+        try:
+            payments: list[IncomingPayment] = []
+            seen: set[str] = set()
+            cursor: dict[str, Any] = {}
+            newest_lt: int | None = None
+            newest_hash: str | None = None
+            reached_cursor = last_lt is None
+            reached_oldest = False
+            oldest_timestamp = int(oldest.timestamp()) - 30 if oldest else None
+            page_limit = self._settings.PAYMENT_MAX_PAGES
+
+            for page in range(page_limit):
+                params: dict[str, Any] = {
+                    "address": self._settings.TON_RECEIVER_ADDRESS,
+                    "limit": min(self._settings.PAYMENT_SCAN_LIMIT, 100),
+                    **cursor,
+                }
+                if self._settings.TONCENTER_API_KEY:
+                    params["api_key"] = self._settings.TONCENTER_API_KEY
+                response = await self._toncenter_get(
+                    f"{self._settings.TONCENTER_V2_URL.rstrip('/')}/getTransactions",
+                    params=params,
                 )
-            if not rows or len(rows) < params["limit"]:
-                break
-            last = rows[-1]
-            last_id = last.get("transaction_id") or {}
-            cursor = {"lt": last_id.get("lt"), "hash": last_id.get("hash")}
-            if (
-                oldest_timestamp is not None
-                and int(last.get("utime") or 0) < oldest_timestamp
-            ):
-                break
-        return payments
+                response.raise_for_status()
+                body = response.json()
+                if not body.get("ok"):
+                    raise ValueError(f"TON Center rejected request: {body}")
+                rows = body.get("result") or []
+                if not rows:
+                    reached_cursor = True
+                    break
+
+                stop_page = False
+                for tx in rows:
+                    transaction_id = tx.get("transaction_id") or {}
+                    tx_lt = int(transaction_id.get("lt") or 0)
+                    tx_hash = str(transaction_id.get("hash") or "")
+                    if newest_lt is None and tx_lt > 0:
+                        newest_lt = tx_lt
+                        newest_hash = tx_hash or None
+
+                    if last_lt is not None and tx_lt > 0 and tx_lt <= last_lt:
+                        reached_cursor = True
+                        stop_page = True
+                        break
+
+                    tx_timestamp = int(tx.get("utime") or 0) or None
+                    if (
+                        last_lt is None
+                        and oldest_timestamp is not None
+                        and tx_timestamp is not None
+                        and tx_timestamp < oldest_timestamp
+                    ):
+                        reached_oldest = True
+                        stop_page = True
+                        break
+
+                    message = tx.get("in_msg") or {}
+                    destination = str(message.get("destination") or "")
+                    amount_atomic = int(message.get("value") or 0)
+                    if (
+                        not tx_hash
+                        or tx_hash in seen
+                        or amount_atomic <= 0
+                        or not same_address(destination, self._settings.TON_RECEIVER_ADDRESS)
+                        or bool(message.get("bounced"))
+                        or bool(tx.get("aborted"))
+                    ):
+                        continue
+
+                    seen.add(tx_hash)
+                    payments.append(
+                        IncomingPayment(
+                            currency=Currency.TON,
+                            tx_hash=tx_hash,
+                            amount_atomic=amount_atomic,
+                            destination=self._settings.TON_RECEIVER_ADDRESS,
+                            memo=ton_comment(message),
+                            tx_lt=tx_lt or None,
+                            sender=str(message.get("source") or "") or None,
+                            timestamp=tx_timestamp,
+                        )
+                    )
+
+                if stop_page or len(rows) < params["limit"]:
+                    reached_cursor = reached_cursor or last_lt is None
+                    break
+
+                last = rows[-1]
+                last_id = last.get("transaction_id") or {}
+                cursor = {"lt": last_id.get("lt"), "hash": last_id.get("hash")}
+
+                if page == page_limit - 1 and last_lt is not None and not reached_cursor:
+                    raise PaymentProviderTemporaryError(
+                        "TON payment scanner backlog exceeds configured page limit; cursor was not advanced"
+                    )
+
+            if last_lt is None and oldest is not None and not (reached_oldest or reached_cursor):
+                raise PaymentProviderTemporaryError(
+                    "Initial TON payment scan did not reach the oldest active order; cursor was not advanced"
+                )
+
+            payments.sort(key=lambda item: item.tx_lt or 0)
+            return PaymentScanBatch(payments, newest_lt, newest_hash)
+        except PaymentProviderTemporaryError:
+            raise
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise PaymentProviderTemporaryError(str(exc)) from exc
 
     async def _scan_usdt(self, oldest: datetime | None) -> list[IncomingPayment]:
         payments: list[IncomingPayment] = []
@@ -228,9 +305,7 @@ class PaymentService:
             for transfer in rows:
                 destination = str(transfer.get("destination") or "")
                 master = str(transfer.get("jetton_master") or "")
-                tx_hash = str(
-                    transfer.get("transaction_hash") or transfer.get("trace_id") or ""
-                )
+                tx_hash = str(transfer.get("transaction_hash") or transfer.get("trace_id") or "")
                 if transfer.get("transaction_aborted") or not tx_hash:
                     continue
                 if not same_address(destination, self._settings.TON_RECEIVER_ADDRESS):

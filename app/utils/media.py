@@ -14,7 +14,7 @@ from aiogram.types import (
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 MEDIA = ASSETS / "media"
-FALLBACK = ASSETS / "menu.png"
+FALLBACK = MEDIA / "main_menu.jpg"
 EXTENSIONS = (".gif", ".mp4", ".png", ".jpg", ".jpeg")
 _MEDIA_FILE_IDS: dict[Path, str] = {}
 _MESSAGE_MEDIA_PATHS: dict[tuple[int, int], Path] = {}
@@ -118,7 +118,6 @@ async def render_card(
                     return result
                 return message
             except TelegramRetryAfter:
-                # Keep one message on screen even under Telegram rate limiting.
                 try:
                     return await _edit_caption(message, caption, keyboard)
                 except (TelegramBadRequest, TelegramRetryAfter):
@@ -127,8 +126,6 @@ async def render_card(
                 if _is_not_modified(exc):
                     _MESSAGE_MEDIA_PATHS[_message_key(message)] = path
                     return message
-                # A cached file_id can be invalidated by Telegram. Retry once
-                # with a local upload, then fall back to caption-only editing.
                 if path in _MEDIA_FILE_IDS:
                     _MEDIA_FILE_IDS.pop(path, None)
                     try:

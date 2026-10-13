@@ -79,6 +79,7 @@ async def build_container(settings: Settings) -> Container:
     workers = WorkerManager(
         settings,
         repositories.orders,
+        repositories.payments,
         payments,
         fragment,
         settlement,
