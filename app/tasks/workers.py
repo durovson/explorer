@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from app.api.notifier import OrderNotifier
 from app.config import Settings
@@ -12,6 +13,7 @@ from app.core.exceptions import FragmentAmbiguousError, FragmentRejectedError
 from app.repositories.orders import OrderRepository
 from app.services.fragment import FragmentService
 from app.services.payments import PaymentService
+from app.services.settlement import SettlementService
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +27,14 @@ class WorkerManager:
         orders: OrderRepository,
         payments: PaymentService,
         fragment: FragmentService,
+        settlement: SettlementService,
         notifier: OrderNotifier,
     ):
         self._settings = settings
         self._orders = orders
         self._payments = payments
         self._fragment = fragment
+        self._settlement = settlement
         self._notifier = notifier
         self._stop = asyncio.Event()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -46,6 +50,7 @@ class WorkerManager:
         self._stop.clear()
         workers = {
             "ton-payments": lambda: self._payment_loop(Currency.TON),
+            # Kept for legacy USDT orders only; new checkout is TON-only.
             "usdt-payments": lambda: self._payment_loop(Currency.USDT),
             "order-expiry": self._expiry_loop,
             "fragment-fulfillment": self._fulfillment_loop,
@@ -115,6 +120,7 @@ class WorkerManager:
         async def run_once() -> None:
             changed = await self._orders.expire_due()
             changed.extend(await self._orders.review_stale_processing())
+            await self._orders.review_stale_profit_sweeps()
             for order in changed:
                 try:
                     await self._notifier.order_changed(order)
@@ -122,6 +128,42 @@ class WorkerManager:
                     logger.exception("Could not notify expired order %s", order.id)
 
         await self._repeat("order-expiry", run_once)
+
+    async def _sweep_profit(
+        self,
+        order,
+        provider_debit_ton: Decimal | None,
+    ) -> None:
+        if order.currency is not Currency.TON:
+            return
+        provider_cost = provider_debit_ton or order.provider_cost_ton
+        if provider_cost is None:
+            logger.warning(
+                "No provider cost available for order %s; profit sweep requires review",
+                order.id,
+            )
+            return
+        margin = order.amount - provider_cost
+        if margin <= 0:
+            logger.warning(
+                "No positive realized margin for order %s: paid=%s provider=%s",
+                order.id,
+                order.amount,
+                provider_cost,
+            )
+            return
+        margin = margin.quantize(Decimal("0.000000001"))
+        if not await self._orders.claim_profit_sweep(order.id, margin):
+            return
+        try:
+            message_hash = await self._settlement.transfer_profit(order.id, margin)
+        except Exception as exc:
+            # A send may already have reached the network. Never auto-retry an
+            # ambiguous settlement; require on-chain verification first.
+            await self._orders.fail_profit_sweep(order.id, str(exc))
+            logger.exception("Profit sweep requires manual review for %s", order.id)
+            return
+        await self._orders.complete_profit_sweep(order.id, message_hash)
 
     async def _fulfillment_loop(self) -> None:
         async def run_once() -> None:
@@ -170,6 +212,7 @@ class WorkerManager:
                             result.http_status,
                         )
                         await self._notifier.order_changed(completed)
+                        await self._sweep_profit(completed, result.provider_debit_ton)
                 except Exception:
                     logger.exception(
                         "Fulfillment iteration failed for order %s", pending.id
