@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.keyboards.menu import back_home
 from app.services.admin import AdminService
+from app.utils.emoji import premium
 from app.utils.media import render_card
 
 router = Router(name="admin")
@@ -14,7 +15,7 @@ router = Router(name="admin")
 
 def _stats_text(stats) -> str:
     return (
-        "<b>🛠 Статистика</b>\n\n"
+        f"<b>{premium('settings')} Статистика</b>\n\n"
         f"Пользователи: <b>{stats.users}</b>\n"
         f"Заказы: <b>{stats.orders}</b>\n"
         f"Ожидают оплату: <b>{stats.waiting}</b>\n"
@@ -55,8 +56,8 @@ async def approve_retry(
     except PermissionError:
         return
     except Exception as exc:
-        await message.answer(f"❌ {escape(str(exc))}")
+        await message.answer(f"{premium('cancel')} {escape(str(exc))}")
         return
     await message.answer(
-        f"✅ Заказ <code>{order.id}</code> возвращён в очередь после ручной проверки."
+        f"{premium('success')} Заказ <code>{order.id}</code> возвращён в очередь после ручной проверки."
     )
