@@ -25,6 +25,25 @@ class OrderRepository:
         )
         return self._order(response.data[0])
 
+    async def update_bot_message(
+        self, order_id: UUID, chat_id: int, message_id: int
+    ) -> Order | None:
+        response = await self._db.run(
+            lambda client: (
+                client.table("orders")
+                .update(
+                    {
+                        "bot_chat_id": chat_id,
+                        "bot_message_id": message_id,
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+                .eq("id", str(order_id))
+                .execute()
+            )
+        )
+        return self._order(response.data[0]) if response.data else None
+
     async def shop_stats(self) -> ShopStats:
         response = await self._db.rpc("shop_public_stats", {})
         return ShopStats.model_validate(response.data[0] if response.data else {})

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
 from MarketappAPI import MarketappClient
 from MarketappAPI.types.models import BuyPremiumBody, BuyStarsBody, SearchRecipientBody
+from ton_core import NetworkGlobalID
+from tonutils.clients import ToncenterClient
+from tonutils.contracts import WalletV4R2, WalletV5R1
 
 from app.config import Settings
 from app.core.enums import ProductType
@@ -15,6 +20,9 @@ from app.core.exceptions import (
     FragmentTemporaryError,
 )
 from app.models.entities import Order
+from app.services.payments import same_address
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +40,8 @@ class FragmentService:
 
     def __init__(self, settings: Settings):
         self._settings = settings
+        self._wallet_check_lock = asyncio.Lock()
+        self._derived_wallet_address: str | None = None
 
     def _client(self, *, wallet: bool) -> MarketappClient:
         kwargs: dict[str, Any] = {
@@ -48,6 +58,69 @@ class FragmentService:
 
     async def close(self) -> None:
         return None
+
+    async def _wallet_address(self) -> str:
+        """Derive the address Marketapp will sign from, without exposing the seed."""
+        if self._derived_wallet_address is not None:
+            return self._derived_wallet_address
+        async with self._wallet_check_lock:
+            if self._derived_wallet_address is not None:
+                return self._derived_wallet_address
+            client = ToncenterClient(
+                network=NetworkGlobalID.MAINNET,
+                api_key=self._settings.TONCENTER_API_KEY,
+                rps_limit=self._settings.TONCENTER_RPS_LIMIT,
+            )
+            await client.connect()
+            try:
+                wallet_cls = (
+                    WalletV5R1
+                    if self._settings.MARKETAPP_WALLET_VERSION == "V5R1"
+                    else WalletV4R2
+                )
+                wallet, _, _, _ = wallet_cls.from_mnemonic(
+                    client, self._settings.MARKETAPP_WALLET_SEED
+                )
+                self._derived_wallet_address = wallet.address.to_str(
+                    is_bounceable=False
+                )
+                return self._derived_wallet_address
+            finally:
+                await client.close()
+
+    async def _ensure_operational_wallet_matches_receiver(
+        self, attempt_key: str
+    ) -> None:
+        try:
+            derived = await self._wallet_address()
+        except Exception as exc:
+            logger.exception("Could not derive Marketapp operational wallet")
+            raise FragmentTemporaryError(
+                "Не удалось проверить операционный кошелёк Marketapp. Проверьте seed и версию кошелька.",
+                response={"attempt_key": attempt_key},
+                retry_after_seconds=300,
+            ) from exc
+
+        receiver = self._settings.TON_RECEIVER_ADDRESS
+        if same_address(derived, receiver):
+            return
+        # Both addresses are public blockchain identifiers; never log the seed.
+        logger.error(
+            "Marketapp signing wallet does not match TON receiver: derived=%s receiver=%s version=%s",
+            derived,
+            receiver,
+            self._settings.MARKETAPP_WALLET_VERSION,
+        )
+        raise FragmentTemporaryError(
+            "Кошелёк Marketapp не совпадает с адресом приёма TON. Проверьте MARKETAPP_WALLET_SEED и MARKETAPP_WALLET_VERSION.",
+            response={
+                "attempt_key": attempt_key,
+                "wallet_mismatch": True,
+                "derived_wallet_address": derived,
+                "receiver_wallet_address": receiver,
+            },
+            retry_after_seconds=300,
+        )
 
     async def user_info(self, recipient: str, product: ProductType) -> dict[str, Any]:
         username = recipient.lstrip("@")
@@ -114,6 +187,11 @@ class FragmentService:
         )
 
     async def purchase(self, order: Order, idempotency_key: str) -> FragmentResult:
+        # Funds are received on TON_RECEIVER_ADDRESS. Marketapp auto-pay must sign
+        # from that exact wallet; otherwise a funded receiver can still look like
+        # a zero-balance wallet to the provider.
+        await self._ensure_operational_wallet_matches_receiver(idempotency_key)
+
         username = order.recipient.lstrip("@")
         try:
             client = self._client(wallet=True)

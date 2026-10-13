@@ -83,7 +83,7 @@ async def build_container(settings: Settings) -> Container:
         payments,
         fragment,
         settlement,
-        OrderNotifier(bot, settings),
+        OrderNotifier(bot, settings, repositories.orders),
     )
     keepalive = RenderKeepAlive(settings)
     return Container(

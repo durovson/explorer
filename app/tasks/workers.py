@@ -232,6 +232,10 @@ class WorkerManager:
                             response_payload=exc.response,
                             retry_seconds=exc.retry_after_seconds,
                         )
+                        # Keep the user-facing card current even while an already
+                        # paid order waits for a safe pre-broadcast retry. This also
+                        # migrates any legacy image card to the new text-only UI.
+                        await self._notifier.order_changed(retry)
                         logger.info(
                             "Marketapp purchase deferred for order %s: %s", retry.id, exc
                         )

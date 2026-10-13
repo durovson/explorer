@@ -1,62 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import (
-    FSInputFile,
-    InlineKeyboardMarkup,
-    InputMediaAnimation,
-    InputMediaPhoto,
-    Message,
-)
-
-ASSETS = Path(__file__).resolve().parent.parent / "assets"
-MEDIA = ASSETS / "media"
-FALLBACK = MEDIA / "main_menu.jpg"
-EXTENSIONS = (".gif", ".mp4", ".png", ".jpg", ".jpeg")
-_MEDIA_FILE_IDS: dict[Path, str] = {}
-_MESSAGE_MEDIA_PATHS: dict[tuple[int, int], Path] = {}
-
-
-def media_path(screen: str) -> Path:
-    for extension in EXTENSIONS:
-        candidate = MEDIA / f"{screen}{extension}"
-        if candidate.is_file():
-            return candidate
-    return FALLBACK
-
-
-def _source(path: Path) -> str | FSInputFile:
-    return _MEDIA_FILE_IDS.get(path) or FSInputFile(path)
-
-
-def _input_media(path: Path, caption: str):
-    source = _source(path)
-    if path.suffix.lower() in {".gif", ".mp4"}:
-        return InputMediaAnimation(media=source, caption=caption)
-    return InputMediaPhoto(media=source, caption=caption)
-
-
-def input_media(screen: str, caption: str):
-    return _input_media(media_path(screen), caption)
-
-
-def _message_key(message: Message) -> tuple[int, int]:
-    return message.chat.id, message.message_id
-
-
-def _remember(path: Path, message: Message) -> None:
-    if message.animation:
-        _MEDIA_FILE_IDS[path] = message.animation.file_id
-    elif message.photo:
-        _MEDIA_FILE_IDS[path] = message.photo[-1].file_id
-    _MESSAGE_MEDIA_PATHS[_message_key(message)] = path
-
-
-def _same_media(message: Message, path: Path) -> bool:
-    return _MESSAGE_MEDIA_PATHS.get(_message_key(message)) == path
+from aiogram.types import InlineKeyboardMarkup, Message
 
 
 def _is_not_modified(exc: TelegramBadRequest) -> bool:
@@ -69,26 +15,13 @@ async def send_card(
     keyboard: InlineKeyboardMarkup | None,
     screen: str,
 ) -> Message:
-    path = media_path(screen)
-    if path.suffix.lower() in {".gif", ".mp4"}:
-        result = await message.answer_animation(
-            _source(path), caption=caption, reply_markup=keyboard
-        )
-    else:
-        result = await message.answer_photo(
-            _source(path), caption=caption, reply_markup=keyboard
-        )
-    _remember(path, result)
-    return result
+    """Send a text-only bot card.
 
-
-async def _edit_caption(
-    message: Message,
-    caption: str,
-    keyboard: InlineKeyboardMarkup | None,
-) -> Message:
-    result = await message.edit_caption(caption=caption, reply_markup=keyboard)
-    return result if isinstance(result, Message) else message
+    `screen` is intentionally kept in the public signature so existing handlers do
+    not need per-screen branches, but media assets are no longer used anywhere.
+    """
+    _ = screen
+    return await message.answer(caption, reply_markup=keyboard)
 
 
 async def render_card(
@@ -97,58 +30,48 @@ async def render_card(
     keyboard: InlineKeyboardMarkup | None,
     screen: str,
 ) -> Message:
-    """Edit the existing bot card; never spam a replacement on callback errors."""
-    path = media_path(screen)
+    """Render one text-only menu message.
+
+    Legacy photo/animation cards cannot be converted to text with Telegram's edit
+    API. On the first interaction after this release we delete that old media
+    message and replace it once with a text card. All subsequent navigation edits
+    the same text message in place.
+    """
+    _ = screen
     if message.from_user and message.from_user.is_bot:
-        if message.photo or message.animation:
-            if _same_media(message, path):
-                try:
-                    return await _edit_caption(message, caption, keyboard)
-                except TelegramBadRequest as exc:
-                    if _is_not_modified(exc):
-                        return message
-                except TelegramRetryAfter:
-                    return message
+        has_media = bool(
+            message.photo
+            or message.animation
+            or message.video
+            or message.document
+            or message.sticker
+        )
+        if not has_media:
             try:
-                result = await message.edit_media(
-                    media=_input_media(path, caption), reply_markup=keyboard
-                )
-                if isinstance(result, Message):
-                    _remember(path, result)
-                    return result
-                return message
-            except TelegramRetryAfter:
-                try:
-                    return await _edit_caption(message, caption, keyboard)
-                except (TelegramBadRequest, TelegramRetryAfter):
-                    return message
+                result = await message.edit_text(caption, reply_markup=keyboard)
+                return result if isinstance(result, Message) else message
             except TelegramBadRequest as exc:
                 if _is_not_modified(exc):
-                    _MESSAGE_MEDIA_PATHS[_message_key(message)] = path
                     return message
-                if path in _MEDIA_FILE_IDS:
-                    _MEDIA_FILE_IDS.pop(path, None)
-                    try:
-                        result = await message.edit_media(
-                            media=_input_media(path, caption), reply_markup=keyboard
-                        )
-                        if isinstance(result, Message):
-                            _remember(path, result)
-                            return result
-                        return message
-                    except (TelegramBadRequest, TelegramRetryAfter):
-                        pass
-                try:
-                    return await _edit_caption(message, caption, keyboard)
-                except (TelegramBadRequest, TelegramRetryAfter):
-                    return message
-        try:
-            result = await message.edit_text(caption, reply_markup=keyboard)
-            return result if isinstance(result, Message) else message
-        except TelegramBadRequest as exc:
-            if _is_not_modified(exc):
+            except TelegramRetryAfter:
                 return message
+
+        # One-time migration from the old media UI to a text-only card.
+        try:
+            await message.delete()
+        except (TelegramBadRequest, TelegramRetryAfter):
+            # Do not create duplicate menus when Telegram refuses deletion.
+            try:
+                if message.caption is not None:
+                    result = await message.edit_caption(
+                        caption=caption, reply_markup=keyboard
+                    )
+                    return result if isinstance(result, Message) else message
+            except (TelegramBadRequest, TelegramRetryAfter):
+                pass
             return message
+        return await message.answer(caption, reply_markup=keyboard)
+
     return await send_card(message, caption, keyboard, screen)
 
 
@@ -159,65 +82,38 @@ async def edit_card(
     caption: str,
     keyboard: InlineKeyboardMarkup | None,
     screen: str,
-) -> None:
-    """Edit a remembered card without creating a second menu message."""
-    path = media_path(screen)
-    key = (chat_id, message_id)
-    if _MESSAGE_MEDIA_PATHS.get(key) == path:
-        try:
-            await bot.edit_message_caption(
-                chat_id=chat_id,
-                message_id=message_id,
-                caption=caption,
-                reply_markup=keyboard,
-            )
-            return
-        except TelegramBadRequest as exc:
-            if _is_not_modified(exc):
-                return
-        except TelegramRetryAfter:
-            return
+) -> Message | None:
+    """Edit a stored text card, migrating a legacy media card exactly once.
+
+    The returned Message is important when a legacy media message had to be
+    replaced: callers can persist the new message_id and avoid future duplicates.
+    """
+    _ = screen
     try:
-        result = await bot.edit_message_media(
+        result = await bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            media=_input_media(path, caption),
+            text=caption,
             reply_markup=keyboard,
         )
-        if isinstance(result, Message):
-            _remember(path, result)
-        else:
-            _MESSAGE_MEDIA_PATHS[key] = path
-        return
+        return result if isinstance(result, Message) else None
     except TelegramRetryAfter:
-        pass
+        return None
     except TelegramBadRequest as exc:
         if _is_not_modified(exc):
-            _MESSAGE_MEDIA_PATHS[key] = path
-            return
-        if path in _MEDIA_FILE_IDS:
-            _MEDIA_FILE_IDS.pop(path, None)
-            try:
-                result = await bot.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    media=_input_media(path, caption),
-                    reply_markup=keyboard,
-                )
-                if isinstance(result, Message):
-                    _remember(path, result)
-                else:
-                    _MESSAGE_MEDIA_PATHS[key] = path
-                return
-            except (TelegramBadRequest, TelegramRetryAfter):
-                pass
+            return None
+
+    # A legacy media card has no editable text body. Remove it and create one
+    # text card, then let the caller store the replacement message id.
     try:
-        await bot.edit_message_caption(
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except (TelegramBadRequest, TelegramRetryAfter):
+        return None
+    try:
+        return await bot.send_message(
             chat_id=chat_id,
-            message_id=message_id,
-            caption=caption,
+            text=caption,
             reply_markup=keyboard,
         )
-    except TelegramBadRequest as exc:
-        if not _is_not_modified(exc):
-            raise
+    except TelegramRetryAfter:
+        return None

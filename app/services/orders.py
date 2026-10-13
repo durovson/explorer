@@ -81,6 +81,11 @@ class OrderService:
         }
         return await self.orders.create(values)
 
+    async def bind_message(
+        self, order_id: UUID, chat_id: int, message_id: int
+    ) -> Order | None:
+        return await self.orders.update_bot_message(order_id, chat_id, message_id)
+
     async def cancel(self, order_id: UUID, user_id: int) -> Order:
         order = await self.orders.cancel(order_id, user_id)
         if order is None:

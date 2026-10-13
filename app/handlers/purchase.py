@@ -34,23 +34,29 @@ def _product_title(product: ProductType) -> str:
     return f"{premium('diamond')} Купить Premium"
 
 
+async def _remember_card(state: FSMContext, message: Message | None) -> None:
+    if message is None:
+        return
+    await state.update_data(
+        card_chat_id=message.chat.id,
+        card_message_id=message.message_id,
+    )
+
+
 @router.callback_query(F.data.startswith("buy:"))
 async def choose_recipient(callback: CallbackQuery, state: FSMContext) -> None:
     product = ProductType((callback.data or "buy:STARS").split(":", 1)[1])
     await state.clear()
-    await state.update_data(
-        product=product.value,
-        card_chat_id=callback.message.chat.id if callback.message else None,
-        card_message_id=callback.message.message_id if callback.message else None,
-    )
+    await state.update_data(product=product.value)
     if callback.message:
-        await render_card(
+        rendered = await render_card(
             callback.message,
             f"<b>{_product_title(product)}</b>\n\n"
             "<blockquote>Выберите, кому отправить покупку.</blockquote>",
             recipient_keyboard(callback.from_user.username),
             "recipient",
         )
+        await _remember_card(state, rendered)
     await callback.answer()
 
 
@@ -68,7 +74,7 @@ async def recipient_self(callback: CallbackQuery, state: FSMContext) -> None:
 async def recipient_other(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PurchaseStates.recipient)
     if callback.message:
-        await render_card(
+        rendered = await render_card(
             callback.message,
             f"<b>{premium('users')} Получатель</b>\n\n"
             "Введите @username получателя:\n"
@@ -76,6 +82,7 @@ async def recipient_other(callback: CallbackQuery, state: FSMContext) -> None:
             back_home(),
             "recipient",
         )
+        await _remember_card(state, rendered)
     await callback.answer()
 
 
@@ -104,7 +111,8 @@ async def _show_options(message: Message | None, state: FSMContext) -> None:
         f"<blockquote>Выберите {'количество Stars' if product is ProductType.STARS else 'срок подписки'}.</blockquote>"
     )
     if message:
-        await render_card(message, text, product_options(product.value), "product")
+        rendered = await render_card(message, text, product_options(product.value), "product")
+        await _remember_card(state, rendered)
 
 
 async def _show_options_stored(bot: Bot, state: FSMContext) -> None:
@@ -116,7 +124,7 @@ async def _show_options_stored(bot: Bot, state: FSMContext) -> None:
         f"<b>Получатель:</b> {escape(data['recipient'])}\n\n"
         f"<blockquote>Выберите {'количество Stars' if product is ProductType.STARS else 'срок подписки'}.</blockquote>"
     )
-    await edit_card(
+    rendered = await edit_card(
         bot,
         data["card_chat_id"],
         data["card_message_id"],
@@ -124,6 +132,7 @@ async def _show_options_stored(bot: Bot, state: FSMContext) -> None:
         product_options(product.value),
         "product",
     )
+    await _remember_card(state, rendered)
 
 
 @router.callback_query(F.data == "options")
@@ -136,13 +145,14 @@ async def options(callback: CallbackQuery, state: FSMContext) -> None:
 async def custom_amount(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PurchaseStates.custom_stars)
     if callback.message:
-        await render_card(
+        rendered = await render_card(
             callback.message,
             f"<b>{premium('edit')} Своё количество</b>\n\n"
             "Введите целое число от <b>50</b> до <b>1 000 000</b>.",
             back_home(),
             "product",
         )
+        await _remember_card(state, rendered)
     await callback.answer()
 
 
@@ -189,16 +199,18 @@ async def _show_currencies(
         text = await _currency_text(data, pricing)
     except Exception as exc:
         if message:
-            await render_card(
+            rendered = await render_card(
                 message,
                 f"<b>{premium('warning')} Цена временно недоступна</b>\n\n"
                 f"<blockquote>{escape(str(exc)[:180])}</blockquote>",
                 back_home(),
                 "error",
             )
+            await _remember_card(state, rendered)
         return
     if message:
-        await render_card(message, text, currency_keyboard(), "payment_method")
+        rendered = await render_card(message, text, currency_keyboard(), "payment_method")
+        await _remember_card(state, rendered)
 
 
 async def _show_currencies_stored(
@@ -209,7 +221,7 @@ async def _show_currencies_stored(
     try:
         text = await _currency_text(data, pricing)
     except Exception as exc:
-        await edit_card(
+        rendered = await edit_card(
             bot,
             data["card_chat_id"],
             data["card_message_id"],
@@ -218,8 +230,9 @@ async def _show_currencies_stored(
             back_home(),
             "error",
         )
+        await _remember_card(state, rendered)
         return
-    await edit_card(
+    rendered = await edit_card(
         bot,
         data["card_chat_id"],
         data["card_message_id"],
@@ -227,6 +240,7 @@ async def _show_currencies_stored(
         currency_keyboard(),
         "payment_method",
     )
+    await _remember_card(state, rendered)
 
 
 async def _currency_text(data: dict, pricing: PriceService) -> str:
@@ -307,12 +321,17 @@ async def create_order(
         f"{premium('warning')} <b>Важно:</b> отправьте точную сумму и Memo без изменений.\n\n"
         f"Оплата действует <b>{minutes} мин.</b> · Заказ <code>#{str(order.id)[:10]}</code>"
     )
-    await render_card(
+    rendered = await render_card(
         callback.message,
         caption,
         payment_keyboard(orders.payment_link(order), str(order.id)),
         "payment_wait",
     )
+    if (
+        rendered.chat.id != order.bot_chat_id
+        or rendered.message_id != order.bot_message_id
+    ):
+        await orders.bind_message(order.id, rendered.chat.id, rendered.message_id)
     await callback.answer()
 
 

@@ -8,6 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from app.config import Settings
 from app.core.enums import OrderStatus
 from app.models.entities import Order
+from app.repositories.orders import OrderRepository
 from app.utils.emoji import premium
 from app.utils.media import edit_card
 
@@ -15,9 +16,10 @@ logger = logging.getLogger(__name__)
 
 
 class OrderNotifier:
-    def __init__(self, bot: Bot, settings: Settings):
+    def __init__(self, bot: Bot, settings: Settings, orders: OrderRepository):
         self._bot = bot
         self._settings = settings
+        self._orders = orders
 
     async def order_changed(self, order: Order) -> None:
         if not order.bot_chat_id or not order.bot_message_id:
@@ -67,7 +69,7 @@ class OrderNotifier:
         else:
             return
         try:
-            await edit_card(
+            rendered = await edit_card(
                 self._bot,
                 order.bot_chat_id,
                 order.bot_message_id,
@@ -75,5 +77,11 @@ class OrderNotifier:
                 keyboard,
                 screen,
             )
+            if rendered is not None and rendered.message_id != order.bot_message_id:
+                await self._orders.update_bot_message(
+                    order.id, rendered.chat.id, rendered.message_id
+                )
         except TelegramBadRequest as exc:
             logger.warning("Could not update order %s notification: %s", order.id, exc)
+        except Exception:
+            logger.exception("Could not persist order %s notification card", order.id)
