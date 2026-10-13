@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 
 from MarketappAPI import MarketappClient
@@ -19,10 +20,11 @@ class FragmentResult:
     payload: dict[str, Any]
     http_status: int
     external_order_id: str
+    provider_debit_ton: Decimal | None = None
 
 
 class FragmentService:
-    """Marketapp provider adapter; legacy class name keeps DB/RPC compatibility."""
+    """Purchase provider adapter; legacy class name keeps DB/RPC compatibility."""
 
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -46,9 +48,6 @@ class FragmentService:
     async def user_info(self, recipient: str, product: ProductType) -> dict[str, Any]:
         username = recipient.lstrip("@")
         try:
-            # marketapp-api 1.0.1 does not expose __aexit__, so MarketappClient
-            # cannot be used with ``async with``. Its request methods are async
-            # and are called directly.
             client = self._client(wallet=False)
             body = SearchRecipientBody(username=username)
             response = (
@@ -65,7 +64,7 @@ class FragmentService:
                 "already" in lower or "subscribed" in lower or "active" in lower
             ):
                 raise ValueError("у получателя уже активен Premium") from exc
-            raise RuntimeError(f"Marketapp preflight unavailable: {message[:160]}") from exc
+            raise RuntimeError("Проверка получателя временно недоступна") from exc
 
         if response is None:
             raise ValueError("username не найден")
@@ -85,6 +84,21 @@ class FragmentService:
             "attempt_key": attempt_key,
         }
 
+    @staticmethod
+    def _provider_debit(result: object, order: Order) -> Decimal | None:
+        before = getattr(result, "balance_before", None)
+        after = getattr(result, "balance_after", None)
+        if before is None or after is None:
+            return None
+        try:
+            debit = Decimal(str(before)) - Decimal(str(after))
+        except Exception:
+            return None
+        # Reject values that are clearly atomic-unit balances or otherwise implausible.
+        if debit <= 0 or debit > order.amount * Decimal("2"):
+            return None
+        return debit
+
     async def purchase(self, order: Order, idempotency_key: str) -> FragmentResult:
         username = order.recipient.lstrip("@")
         try:
@@ -102,22 +116,30 @@ class FragmentService:
         except Exception as exc:
             if type(exc).__name__ == "ValidationError":
                 raise FragmentRejectedError(
-                    f"Marketapp rejected purchase: {str(exc)[:500]}",
+                    f"Покупка отклонена: {str(exc)[:500]}",
                     response={"attempt_key": idempotency_key},
                     http_status=422,
                 ) from exc
             raise FragmentAmbiguousError(
-                f"Marketapp purchase outcome is unknown: {str(exc)[:500]}",
+                f"Результат покупки требует проверки: {str(exc)[:500]}",
                 response={"attempt_key": idempotency_key},
             ) from exc
 
         payload = self._payload(result, idempotency_key)
         tx_hash = str(getattr(result, "tx_hash", "") or "")
         confirmed = bool(getattr(result, "confirmed", False))
+        provider_debit = self._provider_debit(result, order)
+        if provider_debit is not None:
+            payload["provider_debit_ton"] = str(provider_debit)
         if not confirmed or not tx_hash:
             raise FragmentAmbiguousError(
-                "Marketapp returned no confirmed blockchain transaction",
+                "Провайдер не вернул подтверждённую транзакцию",
                 response=payload,
                 http_status=200,
             )
-        return FragmentResult(payload=payload, http_status=200, external_order_id=tx_hash)
+        return FragmentResult(
+            payload=payload,
+            http_status=200,
+            external_order_id=tx_hash,
+            provider_debit_ton=provider_debit,
+        )

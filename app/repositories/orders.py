@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -34,6 +35,19 @@ class OrderRepository:
                 client.table("orders")
                 .select("*")
                 .eq("id", str(order_id))
+                .limit(1)
+                .execute()
+            )
+        )
+        return self._order(response.data[0]) if response.data else None
+
+    async def get_for_user(self, order_id: UUID, user_id: int) -> Order | None:
+        response = await self._db.run(
+            lambda client: (
+                client.table("orders")
+                .select("*")
+                .eq("id", str(order_id))
+                .eq("user_id", user_id)
                 .limit(1)
                 .execute()
             )
@@ -107,6 +121,9 @@ class OrderRepository:
         response = await self._db.rpc("review_stale_processing_orders", {})
         return [self._order(row) for row in response.data or []]
 
+    async def review_stale_profit_sweeps(self) -> None:
+        await self._db.rpc("review_stale_profit_sweeps", {})
+
     async def cancel(self, order_id: UUID, user_id: int) -> Order | None:
         response = await self._db.rpc(
             "cancel_order", {"p_order_id": str(order_id), "p_user_id": user_id}
@@ -161,6 +178,27 @@ class OrderRepository:
         if not response.data:
             raise ConcurrentUpdateError("Order fulfillment completion lost its claim")
         return self._order(response.data[0])
+
+    async def claim_profit_sweep(self, order_id: UUID, amount: Decimal) -> bool:
+        response = await self._db.rpc(
+            "claim_profit_sweep",
+            {"p_order_id": str(order_id), "p_amount": str(amount)},
+        )
+        return bool(response.data)
+
+    async def complete_profit_sweep(self, order_id: UUID, message_hash: str) -> bool:
+        response = await self._db.rpc(
+            "complete_profit_sweep",
+            {"p_order_id": str(order_id), "p_message_hash": message_hash},
+        )
+        return bool(response.data)
+
+    async def fail_profit_sweep(self, order_id: UUID, error: str) -> bool:
+        response = await self._db.rpc(
+            "fail_profit_sweep",
+            {"p_order_id": str(order_id), "p_error": error[:4000]},
+        )
+        return bool(response.data)
 
     async def fail_fulfillment(
         self,

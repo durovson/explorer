@@ -25,17 +25,21 @@ class OrderNotifier:
         if order.status is OrderStatus.PAYMENT_CONFIRMED:
             screen = "loading"
             caption = (
-                f"{premium('success')} <b>Платеж подтвержден в блокчейне</b>\n\n"
-                f"{order.item_label} для <b>{order.recipient}</b>\n\n"
-                "Покупаем через Marketapp…"
+                f"{premium('success')} <b>Платёж подтверждён</b>\n\n"
+                "<blockquote>"
+                f"{order.item_label}\nПолучатель: <b>{order.recipient}</b>"
+                "</blockquote>\n\n"
+                f"{premium('pending')} Заказ передан в исполнение."
             )
             keyboard = None
         elif order.status is OrderStatus.COMPLETED:
             screen = "success"
             caption = (
                 f"{premium('success')} <b>Заказ выполнен</b>\n\n"
-                f"{order.item_label}\nПолучатель: <b>{order.recipient}</b>\n\n"
-                f"Заказ: <code>{str(order.id)[:8]}</code>"
+                "<blockquote>"
+                f"{order.item_label}\nПолучатель: <b>{order.recipient}</b>\n"
+                f"Заказ: <code>#{str(order.id)[:10]}</code>"
+                "</blockquote>"
             )
             from app.keyboards.menu import completed_keyboard
 
@@ -44,7 +48,7 @@ class OrderNotifier:
             screen = "error"
             caption = (
                 f"{premium('warning')} <b>Время оплаты истекло</b>\n\n"
-                "Не отправляйте средства по старым реквизитам. Создайте новый заказ."
+                "<blockquote>Не отправляйте средства по старым реквизитам. Создайте новый заказ.</blockquote>"
             )
             from app.keyboards.menu import expired_keyboard
 
@@ -53,8 +57,9 @@ class OrderNotifier:
             screen = "error"
             caption = (
                 f"{premium('warning')} <b>Оплата сохранена, нужна проверка</b>\n\n"
-                f"Заказ: <code>{order.id}</code>\n"
-                "Повторно платить не нужно. Поддержка проверит исполнение Marketapp."
+                f"<blockquote>Заказ: <code>#{str(order.id)[:10]}</code>\n"
+                "Повторно платить не нужно.</blockquote>\n\n"
+                "Поддержка проверит исполнение заказа."
             )
             from app.keyboards.menu import support_keyboard
 

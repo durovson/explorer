@@ -28,6 +28,7 @@ class Order(BaseModel):
     currency: Currency
     amount: Decimal
     usd_equivalent: Decimal | None = None
+    provider_cost_ton: Decimal | None = None
     wallet_address: str
     memo: str
     status: OrderStatus
@@ -71,6 +72,7 @@ class ReferralStats(BaseModel):
     paid_orders: int = 0
     paid_ton: Decimal = Decimal("0")
     paid_usdt: Decimal = Decimal("0")
+    reward_rate: Decimal = Decimal("0")
 
 
 class ShopStats(BaseModel):

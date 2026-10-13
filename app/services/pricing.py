@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from decimal import ROUND_UP, Decimal
 
 from MarketappAPI import MarketappClient
@@ -13,6 +14,12 @@ TON_MARKUP_NUMERATOR = Decimal("539612")
 TON_MARKUP_DENOMINATOR = Decimal("10229388")
 USDT_MARKUP_NUMERATOR = Decimal("19")
 USDT_MARKUP_DENOMINATOR = Decimal("75")
+
+
+@dataclass(frozen=True, slots=True)
+class PriceQuote:
+    base: Decimal
+    total: Decimal
 
 
 class PriceService:
@@ -34,7 +41,7 @@ class PriceService:
                 continue
             if result > 0:
                 return result
-        raise RuntimeError("Marketapp returned an invalid price")
+        raise RuntimeError("Провайдер временно не вернул корректную цену")
 
     async def _base_prices(
         self,
@@ -52,9 +59,6 @@ class PriceService:
         if cached and now - cached[0] <= self.CACHE_SECONDS:
             return cached[1]
 
-        # marketapp-api 1.0.1 is async-first, but MarketappClient itself does not
-        # implement the asynchronous context-manager protocol. Instantiate it
-        # directly and await its API methods instead of using ``async with``.
         client = MarketappClient(
             api_token=self._settings.MARKETAPP_API_TOKEN,
             timeout=self._settings.MARKETAPP_TIMEOUT_SECONDS,
@@ -71,7 +75,7 @@ class PriceService:
             response = await client.get_premium_price()
             option = getattr(response, f"months{quantity}", None)
             if option is None:
-                raise RuntimeError("Marketapp did not return this Premium tariff")
+                raise RuntimeError("Этот тариф Premium временно недоступен")
             ton = self._positive_decimal(option, "gram", "ton")
             usdt = self._positive_decimal(option, "usd")
 
@@ -84,13 +88,30 @@ class PriceService:
         if currency is Currency.TON:
             numerator = TON_MARKUP_NUMERATOR
             denominator = TON_MARKUP_DENOMINATOR
-            quantum = Decimal("0.000000001")
+            # Checkout follows the requested rule: 0.584902224 -> 0.585.
+            quantum = Decimal("0.001")
         else:
             numerator = USDT_MARKUP_NUMERATOR
             denominator = USDT_MARKUP_DENOMINATOR
-            quantum = Decimal("0.000001")
+            quantum = Decimal("0.01")
         total = base * (Decimal(1) + numerator / denominator)
         return total.quantize(quantum, rounding=ROUND_UP)
+
+    async def quote(
+        self,
+        product: ProductType,
+        currency: Currency,
+        *,
+        stars_amount: int | None = None,
+        premium_months: int | None = None,
+    ) -> PriceQuote:
+        prices = await self._base_prices(
+            product,
+            stars_amount=stars_amount,
+            premium_months=premium_months,
+        )
+        base = prices[currency]
+        return PriceQuote(base=base, total=self._with_fixed_markup(base, currency))
 
     async def calculate(
         self,
@@ -100,9 +121,10 @@ class PriceService:
         stars_amount: int | None = None,
         premium_months: int | None = None,
     ) -> Decimal:
-        base = await self._base_prices(
+        quote = await self.quote(
             product,
+            currency,
             stars_amount=stars_amount,
             premium_months=premium_months,
         )
-        return self._with_fixed_markup(base[currency], currency)
+        return quote.total

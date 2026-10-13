@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str
 
     TON_RECEIVER_ADDRESS: str
+    SERVICE_PROFIT_ADDRESS: str
     TONCENTER_API_KEY: str
     TONCENTER_V2_URL: str = "https://toncenter.com/api/v2"
     TONCENTER_V3_URL: str = "https://toncenter.com/api/v3"
@@ -93,6 +94,7 @@ class Settings(BaseSettings):
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "TON_RECEIVER_ADDRESS",
+        "SERVICE_PROFIT_ADDRESS",
         "TONCENTER_API_KEY",
         "MARKETAPP_API_TOKEN",
         mode="before",
