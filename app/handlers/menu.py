@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from html import escape
 
 from aiogram import F, Router
@@ -9,22 +10,37 @@ from aiogram.types import CallbackQuery, Message
 
 from app.config import Settings
 from app.keyboards.menu import back_home, home_keyboard, orders_keyboard
-from app.models.entities import Order, User
+from app.models.entities import Order, ShopStats, User
 from app.repositories.orders import OrderRepository
 from app.services.referrals import ReferralService
+from app.utils.emoji import premium
 from app.utils.media import render_card, send_card
 
 router = Router(name="menu")
 
 
-def _home_text() -> str:
+def _home_text(stats: ShopStats) -> str:
+    started_at = stats.started_at or datetime.now(UTC)
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=UTC)
+    days = max(1, (datetime.now(UTC).date() - started_at.date()).days + 1)
+    stars = f"{stats.stars_sold:,}".replace(",", " ")
+    usd = f"{stats.volume_usd:.2f}"
     return (
-        "<b>Stars & Premium</b>\n\n"
-        "Покупка Telegram Stars и Premium через Fragment.\n\n"
-        "💎 Оплата только TON или USDT в сети TON.\n"
-        "Каждый заказ оплачивается отдельной прямой транзакцией — "
-        "внутреннего баланса нет."
+        "<b>Добро пожаловать в STRS | TG!</b>\n\n"
+        "Здесь вы можете купить чистые Stars и Telegram Premium напрямую без KYC.\n\n"
+        f"{premium('coin')} <b>До 25% дешевле, чем в Telegram!</b>\n\n"
+        f"{premium('calendar')} Бот работает <b>{days}</b> дней. "
+        f"За это время через него куплено <b>{stars}</b> звёзд "
+        f"на сумму <b>{usd}$</b>."
     )
+
+
+async def _stats(order_repository: OrderRepository) -> ShopStats:
+    try:
+        return await order_repository.shop_stats()
+    except Exception:
+        return ShopStats(started_at=datetime.now(UTC))
 
 
 @router.message(CommandStart())
@@ -34,6 +50,7 @@ async def start(
     db_user: User,
     settings: Settings,
     referrals: ReferralService,
+    order_repository: OrderRepository,
     state: FSMContext,
 ) -> None:
     await state.clear()
@@ -47,7 +64,7 @@ async def start(
             pass
     await send_card(
         message,
-        _home_text(),
+        _home_text(await _stats(order_repository)),
         home_keyboard(settings.SUPPORT_URL, db_user.telegram_id in settings.admin_ids),
         "main_menu",
     )
@@ -55,13 +72,17 @@ async def start(
 
 @router.callback_query(F.data.in_({"home", "shop"}))
 async def home(
-    callback: CallbackQuery, db_user: User, settings: Settings, state: FSMContext
+    callback: CallbackQuery,
+    db_user: User,
+    settings: Settings,
+    order_repository: OrderRepository,
+    state: FSMContext,
 ) -> None:
     await state.clear()
     if callback.message:
         await render_card(
             callback.message,
-            _home_text(),
+            _home_text(await _stats(order_repository)),
             home_keyboard(
                 settings.SUPPORT_URL, db_user.telegram_id in settings.admin_ids
             ),
@@ -76,7 +97,7 @@ async def orders(
 ) -> None:
     page = max(0, int((callback.data or "orders:0").split(":", 1)[1]))
     items, has_next = await order_repository.list_for_user(db_user.telegram_id, page)
-    lines = ["<b>📋 Мои заказы</b>", ""]
+    lines = [f"<b>{premium('document')} Мои заказы</b>", ""]
     if not items:
         lines.append("Заказов пока нет.")
     for order in items:
@@ -115,7 +136,7 @@ async def referrals_screen(
     )
     link = f"https://t.me/{username}?start=ref_{db_user.telegram_id}"
     text = (
-        "<b>🎁 Друзья</b>\n\n"
+        f"<b>{premium('users')} Друзья</b>\n\n"
         f"Ваша ссылка:\n<code>{link}</code>\n\n"
         f"Приглашено: <b>{stats.invited}</b>\n"
         f"Оплаченных заказов: <b>{stats.paid_orders}</b>\n"
@@ -129,22 +150,13 @@ async def referrals_screen(
     await callback.answer()
 
 
-@router.callback_query(F.data.in_({"about", "settings"}))
+@router.callback_query(F.data == "settings")
 async def info(callback: CallbackQuery) -> None:
-    if callback.data == "about":
-        text = (
-            "<b>🚀 О проекте</b>\n\n"
-            "Заказ создается в Supabase, платеж подтверждается в блокчейне TON, "
-            "после чего бот автоматически отправляет покупку в Fragment."
-        )
-        screen = "settings"
-    else:
-        text = (
-            "<b>⚙ Настройки</b>\n\n"
-            "В этой версии нет внутреннего баланса, пополнения и "
-            "сохраненных платежных реквизитов."
-        )
-        screen = "settings"
+    text = (
+        f"<b>{premium('settings')} Настройки</b>\n\n"
+        "В этой версии нет внутреннего баланса, пополнения и "
+        "сохраненных платежных реквизитов."
+    )
     if callback.message:
-        await render_card(callback.message, text, back_home(), screen)
+        await render_card(callback.message, text, back_home(), "settings")
     await callback.answer()
