@@ -230,12 +230,20 @@ class PaymentService:
 
                     message = tx.get("in_msg") or {}
                     destination = str(message.get("destination") or "")
+                    sender = str(message.get("source") or "") or None
                     amount_atomic = int(message.get("value") or 0)
+                    is_self_transfer = bool(
+                        sender
+                        and destination
+                        and same_address(sender, self._settings.TON_RECEIVER_ADDRESS)
+                        and same_address(destination, self._settings.TON_RECEIVER_ADDRESS)
+                    )
                     if (
                         not tx_hash
                         or tx_hash in seen
                         or amount_atomic <= 0
                         or not same_address(destination, self._settings.TON_RECEIVER_ADDRESS)
+                        or is_self_transfer
                         or bool(message.get("bounced"))
                         or bool(tx.get("aborted"))
                     ):
@@ -250,7 +258,7 @@ class PaymentService:
                             destination=self._settings.TON_RECEIVER_ADDRESS,
                             memo=ton_comment(message),
                             tx_lt=tx_lt or None,
-                            sender=str(message.get("source") or "") or None,
+                            sender=sender,
                             timestamp=tx_timestamp,
                         )
                     )
