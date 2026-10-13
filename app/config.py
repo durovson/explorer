@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     MARKETAPP_API_TOKEN: str
     MARKETAPP_WALLET_SEED: str
     MARKETAPP_WALLET_VERSION: str = "V5R1"
+    MARKETAPP_API_PROVIDER: str = "toncenter"
     MARKETAPP_TIMEOUT_SECONDS: int = Field(default=45, ge=10, le=120)
     FULFILLMENT_LEASE_SECONDS: int = Field(default=180, ge=60, le=900)
 
@@ -82,6 +83,14 @@ class Settings(BaseSettings):
         value = value.strip().upper()
         if value not in {"V5R1", "V4R2"}:
             raise ValueError("MARKETAPP_WALLET_VERSION must be V5R1 or V4R2")
+        return value
+
+    @field_validator("MARKETAPP_API_PROVIDER")
+    @classmethod
+    def supported_marketapp_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"tonapi", "toncenter"}:
+            raise ValueError("MARKETAPP_API_PROVIDER must be tonapi or toncenter")
         return value
 
     @field_validator("MARKETAPP_WALLET_SEED")

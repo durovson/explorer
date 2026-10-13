@@ -46,6 +46,7 @@ class FragmentService:
     def _client(self, *, wallet: bool) -> MarketappClient:
         kwargs: dict[str, Any] = {
             "api_token": self._settings.MARKETAPP_API_TOKEN,
+            "api_provider": self._settings.MARKETAPP_API_PROVIDER,
             "timeout": self._settings.MARKETAPP_TIMEOUT_SECONDS,
         }
         if wallet:
@@ -104,7 +105,6 @@ class FragmentService:
         receiver = self._settings.TON_RECEIVER_ADDRESS
         if same_address(derived, receiver):
             return
-        # Both addresses are public blockchain identifiers; never log the seed.
         logger.error(
             "Marketapp signing wallet does not match TON receiver: derived=%s receiver=%s version=%s",
             derived,
@@ -187,9 +187,6 @@ class FragmentService:
         )
 
     async def purchase(self, order: Order, idempotency_key: str) -> FragmentResult:
-        # Funds are received on TON_RECEIVER_ADDRESS. Marketapp auto-pay must sign
-        # from that exact wallet; otherwise a funded receiver can still look like
-        # a zero-balance wallet to the provider.
         await self._ensure_operational_wallet_matches_receiver(idempotency_key)
 
         username = order.recipient.lstrip("@")

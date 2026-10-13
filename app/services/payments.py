@@ -189,11 +189,10 @@ class PaymentService:
                     "limit": min(self._settings.PAYMENT_SCAN_LIMIT, 100),
                     **cursor,
                 }
-                if self._settings.TONCENTER_API_KEY:
-                    params["api_key"] = self._settings.TONCENTER_API_KEY
                 response = await self._toncenter_get(
                     f"{self._settings.TONCENTER_V2_URL.rstrip('/')}/getTransactions",
                     params=params,
+                    headers=self._headers,
                 )
                 response.raise_for_status()
                 body = response.json()
