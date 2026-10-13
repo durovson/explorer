@@ -27,6 +27,7 @@ class Order(BaseModel):
     premium_months: int | None = None
     currency: Currency
     amount: Decimal
+    usd_equivalent: Decimal | None = None
     wallet_address: str
     memo: str
     status: OrderStatus
@@ -48,7 +49,7 @@ class Order(BaseModel):
     @property
     def item_label(self) -> str:
         if self.product_type is ProductType.STARS:
-            return f"{self.stars_amount} ⭐"
+            return f"{self.stars_amount} Stars"
         return f"Telegram Premium — {self.premium_months} мес."
 
 
@@ -70,6 +71,12 @@ class ReferralStats(BaseModel):
     paid_orders: int = 0
     paid_ton: Decimal = Decimal("0")
     paid_usdt: Decimal = Decimal("0")
+
+
+class ShopStats(BaseModel):
+    started_at: datetime | None = None
+    stars_sold: int = 0
+    volume_usd: Decimal = Decimal("0")
 
 
 class AdminStats(BaseModel):
