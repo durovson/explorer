@@ -52,25 +52,28 @@ class PriceService:
         if cached and now - cached[0] <= self.CACHE_SECONDS:
             return cached[1]
 
-        async with MarketappClient(
+        # marketapp-api 1.0.1 is async-first, but MarketappClient itself does not
+        # implement the asynchronous context-manager protocol. Instantiate it
+        # directly and await its API methods instead of using ``async with``.
+        client = MarketappClient(
             api_token=self._settings.MARKETAPP_API_TOKEN,
             timeout=self._settings.MARKETAPP_TIMEOUT_SECONDS,
-        ) as client:
-            if product is ProductType.STARS:
-                if not 50 <= quantity <= 1_000_000:
-                    raise ValueError("Количество Stars должно быть от 50 до 1 000 000")
-                response = await client.get_stars_prices(StarsPriceBody(quantity=quantity))
-                ton = self._positive_decimal(response, "gram", "ton")
-                usdt = self._positive_decimal(response, "usd")
-            else:
-                if quantity not in {3, 6, 12}:
-                    raise ValueError("Срок Premium должен быть 3, 6 или 12 месяцев")
-                response = await client.get_premium_price()
-                option = getattr(response, f"months{quantity}", None)
-                if option is None:
-                    raise RuntimeError("Marketapp did not return this Premium tariff")
-                ton = self._positive_decimal(option, "gram", "ton")
-                usdt = self._positive_decimal(option, "usd")
+        )
+        if product is ProductType.STARS:
+            if not 50 <= quantity <= 1_000_000:
+                raise ValueError("Количество Stars должно быть от 50 до 1 000 000")
+            response = await client.get_stars_prices(StarsPriceBody(quantity=quantity))
+            ton = self._positive_decimal(response, "gram", "ton")
+            usdt = self._positive_decimal(response, "usd")
+        else:
+            if quantity not in {3, 6, 12}:
+                raise ValueError("Срок Premium должен быть 3, 6 или 12 месяцев")
+            response = await client.get_premium_price()
+            option = getattr(response, f"months{quantity}", None)
+            if option is None:
+                raise RuntimeError("Marketapp did not return this Premium tariff")
+            ton = self._positive_decimal(option, "gram", "ton")
+            usdt = self._positive_decimal(option, "usd")
 
         result = {Currency.TON: ton, Currency.USDT: usdt}
         self._cache[key] = (now, result)
