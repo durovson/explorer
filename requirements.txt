@@ -7,5 +7,6 @@ pydantic-settings>=2.10,<3
 httpx>=0.28,<1
 redis>=6,<7
 marketapp-api==1.0.1
+tonutils>=2.5,<3
 pytest>=8,<9
 pytest-asyncio>=1,<2
