@@ -38,12 +38,22 @@ class OrderService:
 
     async def create(self, *, user_id: int, recipient: str, product: ProductType, currency: Currency, stars_amount: int | None, premium_months: int | None, chat_id: int, message_id: int) -> Order:
         recipient = self.normalize_recipient(recipient)
-        amount = await self.pricing.calculate(product, currency, stars_amount=stars_amount, premium_months=premium_months)
+        price_kwargs = {
+            "stars_amount": stars_amount,
+            "premium_months": premium_months,
+        }
+        amount = await self.pricing.calculate(product, currency, **price_kwargs)
+        usd_equivalent = (
+            amount
+            if currency is Currency.USDT
+            else await self.pricing.calculate(product, Currency.USDT, **price_kwargs)
+        )
         values = {
             "id": str(uuid4()), "user_id": user_id, "recipient": recipient,
             "product_type": product.value, "stars_amount": stars_amount,
             "premium_months": premium_months, "currency": currency.value,
-            "amount": str(amount), "wallet_address": self.settings.TON_RECEIVER_ADDRESS,
+            "amount": str(amount), "usd_equivalent": str(usd_equivalent),
+            "wallet_address": self.settings.TON_RECEIVER_ADDRESS,
             "memo": self._memo(), "status": OrderStatus.WAITING_PAYMENT.value,
             "expires_at": (datetime.now(UTC) + timedelta(minutes=self.settings.PAYMENT_TTL_MINUTES)).isoformat(),
             "bot_chat_id": chat_id, "bot_message_id": message_id,
