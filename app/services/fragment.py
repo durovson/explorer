@@ -46,13 +46,16 @@ class FragmentService:
     async def user_info(self, recipient: str, product: ProductType) -> dict[str, Any]:
         username = recipient.lstrip("@")
         try:
-            async with self._client(wallet=False) as client:
-                body = SearchRecipientBody(username=username)
-                response = (
-                    await client.search_stars_recipient(body)
-                    if product is ProductType.STARS
-                    else await client.search_premium_recipient(body)
-                )
+            # marketapp-api 1.0.1 does not expose __aexit__, so MarketappClient
+            # cannot be used with ``async with``. Its request methods are async
+            # and are called directly.
+            client = self._client(wallet=False)
+            body = SearchRecipientBody(username=username)
+            response = (
+                await client.search_stars_recipient(body)
+                if product is ProductType.STARS
+                else await client.search_premium_recipient(body)
+            )
         except Exception as exc:
             message = str(exc)
             lower = message.lower()
@@ -85,17 +88,17 @@ class FragmentService:
     async def purchase(self, order: Order, idempotency_key: str) -> FragmentResult:
         username = order.recipient.lstrip("@")
         try:
-            async with self._client(wallet=True) as client:
-                if order.product_type is ProductType.STARS:
-                    result = await client.buy_stars(
-                        BuyStarsBody(username=username, quantity=order.stars_amount),
-                        auto_pay=True,
-                    )
-                else:
-                    result = await client.buy_premium(
-                        BuyPremiumBody(username=username, months=order.premium_months),
-                        auto_pay=True,
-                    )
+            client = self._client(wallet=True)
+            if order.product_type is ProductType.STARS:
+                result = await client.buy_stars(
+                    BuyStarsBody(username=username, quantity=order.stars_amount),
+                    auto_pay=True,
+                )
+            else:
+                result = await client.buy_premium(
+                    BuyPremiumBody(username=username, months=order.premium_months),
+                    auto_pay=True,
+                )
         except Exception as exc:
             if type(exc).__name__ == "ValidationError":
                 raise FragmentRejectedError(
