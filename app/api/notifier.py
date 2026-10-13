@@ -8,6 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from app.config import Settings
 from app.core.enums import OrderStatus
 from app.models.entities import Order
+from app.utils.emoji import premium
 from app.utils.media import edit_card
 
 logger = logging.getLogger(__name__)
@@ -24,15 +25,15 @@ class OrderNotifier:
         if order.status is OrderStatus.PAYMENT_CONFIRMED:
             screen = "loading"
             caption = (
-                "✅ <b>Платеж подтвержден в блокчейне</b>\n\n"
+                f"{premium('success')} <b>Платеж подтвержден в блокчейне</b>\n\n"
                 f"{order.item_label} для <b>{order.recipient}</b>\n\n"
-                "Покупаем через Fragment…"
+                "Покупаем через Marketapp…"
             )
             keyboard = None
         elif order.status is OrderStatus.COMPLETED:
             screen = "success"
             caption = (
-                "✅ <b>Заказ выполнен</b>\n\n"
+                f"{premium('success')} <b>Заказ выполнен</b>\n\n"
                 f"{order.item_label}\nПолучатель: <b>{order.recipient}</b>\n\n"
                 f"Заказ: <code>{str(order.id)[:8]}</code>"
             )
@@ -42,7 +43,7 @@ class OrderNotifier:
         elif order.status is OrderStatus.EXPIRED:
             screen = "error"
             caption = (
-                "⌛ <b>Время оплаты истекло</b>\n\n"
+                f"{premium('warning')} <b>Время оплаты истекло</b>\n\n"
                 "Не отправляйте средства по старым реквизитам. Создайте новый заказ."
             )
             from app.keyboards.menu import expired_keyboard
@@ -51,9 +52,9 @@ class OrderNotifier:
         elif order.status in {OrderStatus.FAILED, OrderStatus.MANUAL_REVIEW}:
             screen = "error"
             caption = (
-                "⚠️ <b>Оплата сохранена, нужна проверка</b>\n\n"
+                f"{premium('warning')} <b>Оплата сохранена, нужна проверка</b>\n\n"
                 f"Заказ: <code>{order.id}</code>\n"
-                "Повторно платить не нужно. Поддержка проверит исполнение Fragment."
+                "Повторно платить не нужно. Поддержка проверит исполнение Marketapp."
             )
             from app.keyboards.menu import support_keyboard
 
