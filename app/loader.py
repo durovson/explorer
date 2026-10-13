@@ -24,6 +24,7 @@ from app.services import (
     UserService,
 )
 from app.services.pricing import PriceService
+from app.services.settlement import SettlementService
 from app.tasks import WorkerManager
 
 
@@ -67,6 +68,7 @@ async def build_container(settings: Settings) -> Container:
     orders = OrderService(settings, repositories.orders, pricing)
     payments = PaymentService(settings)
     fragment = FragmentService(settings)
+    settlement = SettlementService(settings)
     referrals = ReferralService(repositories.users)
     admin = AdminService(settings, repositories.admin, repositories.orders)
     services = Services(users, orders, payments, fragment, referrals, admin)
@@ -76,6 +78,7 @@ async def build_container(settings: Settings) -> Container:
         repositories.orders,
         payments,
         fragment,
+        settlement,
         OrderNotifier(bot, settings),
     )
     return Container(
