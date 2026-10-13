@@ -9,6 +9,7 @@ from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 
+from app.api.keepalive import RenderKeepAlive
 from app.api.notifier import OrderNotifier
 from app.bot import create_dispatcher
 from app.config import Settings
@@ -38,9 +39,11 @@ class Container:
     repositories: Repositories
     services: Services
     workers: WorkerManager
+    keepalive: RenderKeepAlive
 
     async def close(self) -> None:
         await self.workers.stop()
+        await self.keepalive.stop()
         await self.services.payments.close()
         await self.services.fragment.close()
         await self.storage.close()
@@ -81,6 +84,15 @@ async def build_container(settings: Settings) -> Container:
         settlement,
         OrderNotifier(bot, settings),
     )
+    keepalive = RenderKeepAlive(settings)
     return Container(
-        settings, bot, dispatcher, storage, database, repositories, services, workers
+        settings,
+        bot,
+        dispatcher,
+        storage,
+        database,
+        repositories,
+        services,
+        workers,
+        keepalive,
     )

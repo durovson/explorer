@@ -30,8 +30,16 @@ services:
         sync: false
       - key: TELEGRAM_USE_POLLING
         value: "false"
+      - key: TELEGRAM_DROP_PENDING_UPDATES
+        value: "true"
       - key: TELEGRAM_WEBHOOK_SECRET
         generateValue: true
+      - key: RENDER_KEEPALIVE_ENABLED
+        value: "true"
+      - key: RENDER_KEEPALIVE_INTERVAL_SECONDS
+        value: "600"
+      - key: RENDER_KEEPALIVE_TIMEOUT_SECONDS
+        value: "10"
       - key: MARKETAPP_WALLET_VERSION
         value: "V5R1"
       - key: TONCENTER_RPS_LIMIT

@@ -26,11 +26,16 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("APP_BASE_URL", "RENDER_EXTERNAL_URL"),
     )
+    RENDER_KEEPALIVE_ENABLED: bool = True
+    RENDER_KEEPALIVE_INTERVAL_SECONDS: int = Field(default=600, ge=60, le=840)
+    RENDER_KEEPALIVE_TIMEOUT_SECONDS: int = Field(default=10, ge=1, le=60)
+
     TELEGRAM_BOT_TOKEN: str
     TELEGRAM_BOT_USERNAME: str = ""
     TELEGRAM_USE_POLLING: bool = False
     TELEGRAM_WEBHOOK_PATH: str = "/telegram/webhook"
     TELEGRAM_WEBHOOK_SECRET: str = ""
+    TELEGRAM_DROP_PENDING_UPDATES: bool = True
     REDIS_URL: str = ""
     ADMIN_IDS: str = ""
     SUPPORT_URL: str = "https://t.me/telegram"
