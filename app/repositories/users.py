@@ -57,6 +57,18 @@ class UserRepository:
         )
         return self._remember(User.model_validate(response.data[0]))
 
+    async def set_language(self, telegram_id: int, language: str) -> User:
+        if language not in ("ru", "en"):
+            raise ValueError("Unsupported language")
+        response = await self._db.run(
+            lambda client: client.table("users").update(
+                {"language": language}
+            ).eq("telegram_id", telegram_id).execute()
+        )
+        if not response.data:
+            raise ValueError("User not found")
+        return self._remember(User.model_validate(response.data[0]))
+
     async def get(self, telegram_id: int) -> User | None:
         cached = self._cached(telegram_id)
         if cached is not None:

@@ -16,6 +16,7 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - run: python -m compileall -q app
+      - run: python -m unittest discover -s tests -v
       - name: Import payment and navigation paths
         run: |
           python - <<'PY'

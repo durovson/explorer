@@ -21,6 +21,7 @@ def create_dispatcher(
     dispatcher.update.outer_middleware(FastCallbackMiddleware())
     dispatcher.update.middleware(CurrentUserMiddleware(services.users))
     dispatcher["settings"] = settings
+    dispatcher["users_service"] = services.users
     dispatcher["referrals"] = services.referrals
     dispatcher["orders"] = services.orders
     dispatcher["pricing"] = services.orders.pricing

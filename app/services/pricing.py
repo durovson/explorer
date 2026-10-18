@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import logging
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal
 
@@ -12,6 +13,8 @@ from app.core.enums import Currency, ProductType
 
 TON_MARKUP_NUMERATOR = Decimal("539612")
 TON_MARKUP_DENOMINATOR = Decimal("10229388")
+logger = logging.getLogger(__name__)
+
 USDT_MARKUP_NUMERATOR = Decimal("19")
 USDT_MARKUP_DENOMINATOR = Decimal("75")
 
@@ -23,7 +26,7 @@ class PriceQuote:
 
 
 class PriceService:
-    CACHE_SECONDS = 20
+    CACHE_SECONDS = 45
 
     def __init__(self, settings: Settings):
         self._settings = settings
@@ -59,12 +62,13 @@ class PriceService:
         if cached and now - cached[0] <= self.CACHE_SECONDS:
             return cached[1]
 
+        started = time.perf_counter()
         client = MarketappClient(
             api_token=self._settings.MARKETAPP_API_TOKEN,
             timeout=self._settings.MARKETAPP_TIMEOUT_SECONDS,
         )
         if product is ProductType.STARS:
-            if not 50 <= quantity <= 1_000_000:
+            if not 50 <= quantity <= 10_000:
                 raise ValueError("Количество Stars должно быть от 50 до 1 000 000")
             response = await client.get_stars_prices(StarsPriceBody(quantity=quantity))
             ton = self._positive_decimal(response, "gram", "ton")
@@ -80,7 +84,11 @@ class PriceService:
             usdt = self._positive_decimal(option, "usd")
 
         result = {Currency.TON: ton, Currency.USDT: usdt}
-        self._cache[key] = (now, result)
+        self._cache[key] = (time.monotonic(), result)
+        logger.info(
+            "marketapp_price_ms=%.1f product=%s quantity=%d",
+            (time.perf_counter() - started) * 1000, product.value, quantity,
+        )
         return result
 
     @staticmethod

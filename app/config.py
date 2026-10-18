@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = ""
     ADMIN_IDS: str = ""
     SUPPORT_URL: str = "https://t.me/not_jammm"
+    CHANNEL_URL: str = ""
 
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str

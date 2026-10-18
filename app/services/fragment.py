@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -190,6 +191,7 @@ class FragmentService:
         await self._ensure_operational_wallet_matches_receiver(idempotency_key)
 
         username = order.recipient.lstrip("@")
+        marketapp_started = time.perf_counter()
         try:
             client = self._client(wallet=True)
             if order.product_type is ProductType.STARS:
@@ -203,6 +205,10 @@ class FragmentService:
                     auto_pay=True,
                 )
         except Exception as exc:
+            logger.warning(
+                "marketapp_purchase_ms=%.1f result=error order=%s",
+                (time.perf_counter() - marketapp_started) * 1000, order.id,
+            )
             response = {"attempt_key": idempotency_key}
             if type(exc).__name__ == "ValidationError":
                 raise FragmentRejectedError(
@@ -221,6 +227,10 @@ class FragmentService:
                 response=response,
             ) from exc
 
+        logger.info(
+            "marketapp_purchase_ms=%.1f result=response order=%s",
+            (time.perf_counter() - marketapp_started) * 1000, order.id,
+        )
         payload = self._payload(result, idempotency_key)
         tx_hash = str(getattr(result, "tx_hash", "") or "")
         confirmed = bool(getattr(result, "confirmed", False))

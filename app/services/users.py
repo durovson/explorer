@@ -10,3 +10,6 @@ class UserService:
         self, telegram_id: int, username: str | None, first_name: str | None
     ) -> User:
         return await self._users.upsert(telegram_id, username, first_name)
+
+    async def set_language(self, telegram_id: int, language: str) -> User:
+        return await self._users.set_language(telegram_id, language)

@@ -15,6 +15,7 @@ class User(BaseModel):
     username: str | None = None
     first_name: str | None = None
     referrer_id: int | None = None
+    language: str = "ru"
     created_at: datetime | None = None
 
 
