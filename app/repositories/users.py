@@ -36,25 +36,28 @@ class UserRepository:
     async def upsert(
         self, telegram_id: int, username: str | None, first_name: str | None
     ) -> User:
-        cached = self._cached(telegram_id)
+        # IMPORTANT: never UPSERT a partial profile. PostgreSQL's conflict
+        # update can reset the saved language to its default on every message.
+        existing = self._cached(telegram_id)
+        if existing is None:
+            existing = await self.get(telegram_id)
         if (
-            cached is not None
-            and cached.username == username
-            and cached.first_name == first_name
+            existing is not None
+            and existing.username == username
+            and existing.first_name == first_name
         ):
-            return cached
-        payload = {
-            "telegram_id": telegram_id,
-            "username": username,
-            "first_name": first_name,
-        }
-        response = await self._db.run(
-            lambda client: (
-                client.table("users")
-                .upsert(payload, on_conflict="telegram_id")
-                .execute()
+            return existing
+        payload = {"username": username, "first_name": first_name}
+        if existing is None:
+            payload["telegram_id"] = telegram_id
+            response = await self._db.run(
+                lambda client: client.table("users").insert(payload).execute()
             )
-        )
+        else:
+            response = await self._db.run(
+                lambda client: client.table("users").update(payload)
+                .eq("telegram_id", telegram_id).execute()
+            )
         return self._remember(User.model_validate(response.data[0]))
 
     async def set_language(self, telegram_id: int, language: str) -> User:

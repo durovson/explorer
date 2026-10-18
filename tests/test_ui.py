@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import AsyncMock
 from decimal import Decimal
 
 from app.core.enums import Currency
@@ -9,6 +10,7 @@ from app.keyboards.menu import (
     recipient_keyboard, settings_keyboard,
 )
 from app.models.entities import User
+from app.repositories.users import UserRepository
 from app.services.pricing import PriceService
 from app.utils.i18n import restore_language, select_language, tr
 
@@ -28,6 +30,14 @@ class BotUiTests(unittest.TestCase):
     def test_language_persisted_in_user_model(self):
         self.assertEqual(User(telegram_id=1).language, "ru")
         self.assertEqual(User(telegram_id=1, language="en").language, "en")
+
+    def test_profile_lookup_preserves_language(self):
+        repo = UserRepository(database=object())
+        repo.get = AsyncMock(
+            return_value=User(telegram_id=11, username="customer", first_name="Customer", language="en")
+        )
+        preserved = __import__("asyncio").run(repo.upsert(11, "customer", "Customer"))
+        self.assertEqual(preserved.language, "en")
 
     def test_recipient_and_custom_prices(self):
         keys = recipient_keyboard("bob").inline_keyboard
