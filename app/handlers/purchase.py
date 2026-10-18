@@ -263,7 +263,7 @@ async def _currency_text(data: dict, pricing: PriceService) -> str:
         f"• <b>Получатель:</b> {escape(data['recipient'])}\n"
         f"• <b>К оплате:</b> {ton} TON"
         "</blockquote>\n\n"
-        f"{premium('info')} Итог уже включает сервисную комиссию и округление вверх."
+        f"{premium('info')} Итог уже включает сервисную комиссию. Сумма указана без округления вверх."
     )
 
 

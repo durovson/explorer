@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     TELEGRAM_DROP_PENDING_UPDATES: bool = True
     REDIS_URL: str = ""
     ADMIN_IDS: str = ""
-    SUPPORT_URL: str = "https://t.me/telegram"
+    SUPPORT_URL: str = "https://t.me/not_jammm"
 
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str

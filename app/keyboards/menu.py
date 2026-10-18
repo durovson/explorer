@@ -156,7 +156,7 @@ def settings_keyboard() -> InlineKeyboardMarkup:
                 _button("Документы", DOCUMENTS, callback_data="settings:documents"),
                 _button("Помощь и FAQ", FAQ, callback_data="settings:faq"),
             ],
-            [_button("Главное меню", HOME, callback_data="home")],
+            [_button("Назад", BACK, callback_data="home")],
         ]
     )
 
@@ -186,8 +186,7 @@ def document_back_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [_button("Назад к документам", BACK, callback_data="settings:documents")],
-            [_button("Главное меню", HOME, callback_data="home")],
-        ]
+                    ]
     )
 
 
@@ -195,8 +194,7 @@ def faq_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [_button("Назад", BACK, callback_data="settings")],
-            [_button("Главное меню", HOME, callback_data="home")],
-        ]
+                    ]
     )
 
 

@@ -251,7 +251,7 @@ async def language_screen(callback: CallbackQuery) -> None:
     text = (
         f"{premium('language')} <b>Язык</b>\n\n"
         "Выберите язык интерфейса.\n"
-        "<blockquote>Сейчас полностью доступен русский язык.</blockquote>"
+        "<blockquote>Русский язык доступен. Подключение English пока в разработке.</blockquote>"
     )
     if callback.message:
         await render_card(callback.message, text, language_keyboard(), "settings")
@@ -333,8 +333,8 @@ async def faq(callback: CallbackQuery) -> None:
         "<blockquote expandable>Выберите Stars или Premium, укажите получателя и оплатите точную сумму TON. После подтверждения блокчейна заказ исполняется автоматически.</blockquote>\n\n"
         "<b>2. Зачем нужен Memo?</b>\n"
         "<blockquote expandable>Memo связывает конкретный перевод с конкретным заказом. Его нужно передать без изменений.</blockquote>\n\n"
-        "<b>3. Почему сумма округлена?</b>\n"
-        "<blockquote expandable>Итоговая цена включает сервисную комиссию и округляется вверх до 0.001 TON, чтобы сумма платежа была однозначной.</blockquote>\n\n"
+        "<b>3. Как рассчитывается сумма?</b>\n"
+        "<blockquote expandable>Цена Marketapp увеличивается на фиксированную комиссию. Платёж фиксируется с точностью до 0.000000001 TON, без округления вверх до 0.001.</blockquote>\n\n"
         "<b>4. Что делать, если заказ на проверке?</b>\n"
         "<blockquote expandable>Не платите повторно. Система сохраняет платёж и переводит неоднозначный результат на ручную проверку.</blockquote>"
     )

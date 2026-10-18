@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from decimal import ROUND_UP, Decimal
+from decimal import ROUND_DOWN, Decimal
 
 from MarketappAPI import MarketappClient
 from MarketappAPI.types.models import StarsPriceBody
@@ -88,14 +88,14 @@ class PriceService:
         if currency is Currency.TON:
             numerator = TON_MARKUP_NUMERATOR
             denominator = TON_MARKUP_DENOMINATOR
-            # Checkout follows the requested rule: 0.584902224 -> 0.585.
-            quantum = Decimal("0.001")
+            # Preserve all representable nanoTON; never round customer prices upward.
+            quantum = Decimal("0.000000001")
         else:
             numerator = USDT_MARKUP_NUMERATOR
             denominator = USDT_MARKUP_DENOMINATOR
-            quantum = Decimal("0.01")
+            quantum = Decimal("0.000001")
         total = base * (Decimal(1) + numerator / denominator)
-        return total.quantize(quantum, rounding=ROUND_UP)
+        return total.quantize(quantum, rounding=ROUND_DOWN)
 
     async def quote(
         self,
