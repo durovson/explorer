@@ -61,6 +61,10 @@ class BotUiTests(unittest.TestCase):
             PriceService._with_fixed_markup(Decimal("1"), Currency.USDT).as_tuple().exponent,
             -6,
         )
+        self.assertEqual(
+            PriceService._with_fixed_markup(Decimal("1.50"), Currency.USDT),
+            Decimal("1.880000"),
+        )
 
 
 if __name__ == "__main__":
