@@ -12,9 +12,9 @@ Production: Python/aiogram + Supabase, deployed from `main` to Render `stars-pre
 
 ## Deployment and migration
 
-Apply `supabase/migrations/20261022205742_grnt_referral_rewards.sql` **before** deploying this release. The migration adds tables/functions/a completion trigger, preserves existing orders, and does not backfill old purchases or change historical paid rewards. The old `bot_settings.referral_reward_rate` must remain zero: the new reward ledger handles commissions.
+Apply `supabase/migrations/20261022210428_grnt_referral_rewards.sql` **before** deploying this release. The migration adds tables/functions/a completion trigger, preserves existing orders, and does not backfill old purchases or change historical paid rewards. The old `bot_settings.referral_reward_rate` must remain zero: the new reward ledger handles commissions.
 
-Render builds with `pip install -r requirements.txt` and starts `python main.py`. Pushes to `main` auto-deploy. `/health` reports database and worker readiness. Required secrets remain managed by Render; do not commit `.env` or wallet seeds.
+Render builds with `pip install -r requirements.txt` and starts `python main.py`. The service is configured for auto-deploy from `main`; if its public-repository connection does not receive push events, trigger a manual deploy after CI passes. `/health` reports database and worker readiness. Required secrets remain managed by Render; do not commit `.env` or wallet seeds.
 
 ## Referral operations
 
