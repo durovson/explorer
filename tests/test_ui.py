@@ -48,22 +48,22 @@ class BotUiTests(unittest.TestCase):
         self.assertEqual(keys[0][0].callback_data, "amount:50")
         self.assertEqual(keys[-1][0].callback_data, "buy:STARS")
 
-    def test_prices_preserve_nanoton_precision(self):
+    def test_prices_include_five_percent_and_floor_to_four_places(self):
         self.assertEqual(
             PriceService._with_fixed_markup(Decimal("1.0229388"), Currency.TON),
-            Decimal("1.076900000"),
+            Decimal("1.0740"),
         )
         self.assertEqual(
             PriceService._with_fixed_markup(Decimal("1"), Currency.TON).as_tuple().exponent,
-            -9,
+            -4,
         )
         self.assertEqual(
             PriceService._with_fixed_markup(Decimal("1"), Currency.USDT).as_tuple().exponent,
-            -6,
+            -4,
         )
         self.assertEqual(
             PriceService._with_fixed_markup(Decimal("1.50"), Currency.USDT),
-            Decimal("1.880000"),
+            Decimal("1.5750"),
         )
 
 

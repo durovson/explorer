@@ -122,7 +122,6 @@ def settings_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [_button(tr("Язык", "Language"), LANGUAGE, callback_data="settings:language")],
         [
-            _button(tr("Документы", "Documents"), DOCUMENTS, callback_data="settings:documents"),
             _button(tr("Помощь и FAQ", "Help & FAQ"), FAQ, callback_data="settings:faq"),
         ],
         [_button(tr("Назад", "Back"), BACK, callback_data="home")],
@@ -174,15 +173,15 @@ def _order_button(order: Order, page: int) -> InlineKeyboardButton:
     return _button(f"{label} | #{str(order.id)[:8]}", icon, callback_data=f"order:{order.id}:{page}")
 
 
-def orders_keyboard(items: list[Order], page: int, has_next: bool) -> InlineKeyboardMarkup:
+def orders_keyboard(items: list[Order], page: int, has_next: bool, total_pages: int = 1) -> InlineKeyboardMarkup:
     rows = [[_order_button(order, page)] for order in items]
     if page > 0 or has_next:
         nav = []
         if page > 0:
-            nav.append(_button("⬅️", PREVIOUS, callback_data=f"orders:{page - 1}"))
-        nav.append(_button(f"{page + 1}{'/…' if has_next else '/' + str(page + 1)}", callback_data="page:current"))
+            nav.append(_button(tr("Назад", "Back"), PREVIOUS, callback_data=f"orders:{page - 1}"))
+        nav.append(_button(f"{page + 1}/{total_pages}", callback_data="page:current"))
         if has_next:
-            nav.append(_button("➡️", NEXT, callback_data=f"orders:{page + 1}"))
+            nav.append(_button(tr("Далее", "Next"), NEXT, callback_data=f"orders:{page + 1}"))
         rows.append(nav)
     rows.append([_button(tr("Назад", "Back"), BACK, callback_data="home")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

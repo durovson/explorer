@@ -73,6 +73,16 @@ class OrderRepository:
         )
         return self._order(response.data[0]) if response.data else None
 
+    async def count_for_user(self, user_id: int) -> int:
+        response = await self._db.run(
+            lambda client: client.table("orders").select("id", count="exact", head=True).eq("user_id", user_id).execute()
+        )
+        return int(response.count or 0)
+
+    async def referral_reward_for_order(self, order_id: UUID) -> Decimal:
+        response = await self._db.run(lambda c: c.table("shop_referral_credits").select("amount").eq("order_id",str(order_id)).execute())
+        return Decimal(str(response.data[0]["amount"])) if response.data else Decimal("0")
+
     async def list_for_user(
         self, user_id: int, page: int, page_size: int = 5
     ) -> tuple[list[Order], bool]:

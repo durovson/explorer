@@ -11,12 +11,7 @@ from MarketappAPI.types.models import StarsPriceBody
 from app.config import Settings
 from app.core.enums import Currency, ProductType
 
-TON_MARKUP_NUMERATOR = Decimal("539612")
-TON_MARKUP_DENOMINATOR = Decimal("10229388")
 logger = logging.getLogger(__name__)
-
-USDT_MARKUP_NUMERATOR = Decimal("19")
-USDT_MARKUP_DENOMINATOR = Decimal("75")
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +64,7 @@ class PriceService:
         )
         if product is ProductType.STARS:
             if not 50 <= quantity <= 10_000:
-                raise ValueError("Количество Stars должно быть от 50 до 1 000 000")
+                raise ValueError("Количество Stars должно быть от 50 до 10 000")
             response = await client.get_stars_prices(StarsPriceBody(quantity=quantity))
             ton = self._positive_decimal(response, "gram", "ton")
             usdt = self._positive_decimal(response, "usd")
@@ -93,17 +88,9 @@ class PriceService:
 
     @staticmethod
     def _with_fixed_markup(base: Decimal, currency: Currency) -> Decimal:
-        if currency is Currency.TON:
-            numerator = TON_MARKUP_NUMERATOR
-            denominator = TON_MARKUP_DENOMINATOR
-            # Preserve all representable nanoTON; never round customer prices upward.
-            quantum = Decimal("0.000000001")
-        else:
-            numerator = USDT_MARKUP_NUMERATOR
-            denominator = USDT_MARKUP_DENOMINATOR
-            quantum = Decimal("0.000001")
-        total = base * (Decimal(1) + numerator / denominator)
-        return total.quantize(quantum, rounding=ROUND_DOWN)
+        # Gas, supplier expenses and rounding are covered by the single 5% fee.
+        # Floor payable totals to 4 places so rounding never increases the fee.
+        return (base * Decimal("1.05")).quantize(Decimal("0.0001"), rounding=ROUND_DOWN)
 
     async def quote(
         self,

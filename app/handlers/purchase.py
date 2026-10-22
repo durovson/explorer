@@ -256,7 +256,7 @@ async def _payment_content(data: dict, pricing: PriceService) -> str:
         + "• " + tr("Получатель: ", "Recipient: ") + escape(data["recipient"]) + "\n"
         + "• " + tr("К оплате: ", "Total: ") + f"<b>{_price(quote)} GRAM</b></blockquote>\n"
         + f"{premium('info')} " +
-        tr("Итог уже включает сервисную комиссию.", "Service fee is included in the total.")
+        tr("Комиссия сервиса — до 5%, включая газ выдачи и округление. Дополнительных комиссий сервиса нет.", "The total includes up to 5% service fee, delivery gas and rounding. No additional service fees.")
     )
 
 

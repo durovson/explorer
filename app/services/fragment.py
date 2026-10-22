@@ -136,6 +136,8 @@ class FragmentService:
         except Exception as exc:
             message = str(exc)
             lower = message.lower()
+            if any(word in lower for word in ("frozen", "blocked", "deleted", "cannot receive", "can't receive", "deactivated", "заморож")):
+                raise ValueError("аккаунт недоступен для отправки: заморожен или ограничен") from exc
             if "not found" in lower or "404" in lower:
                 raise ValueError("username не найден") from exc
             if product is ProductType.PREMIUM and (
@@ -146,9 +148,16 @@ class FragmentService:
 
         if response is None:
             raise ValueError("username не найден")
-        if hasattr(response, "model_dump"):
-            return response.model_dump(mode="json")
-        return {"username": username}
+        data = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
+        if not isinstance(data, dict) or not data:
+            raise RuntimeError("Провайдер не подтвердил возможность отправки")
+        if any(data.get(flag) is True for flag in ("is_frozen", "frozen", "is_deleted", "is_bot")):
+            raise ValueError("аккаунт недоступен для отправки")
+        if any(data.get(flag) is False for flag in ("can_receive", "can_receive_stars", "eligible")):
+            raise ValueError("аккаунт не может принять покупку")
+        if product is ProductType.PREMIUM and any(data.get(flag) is True for flag in ("has_premium", "is_premium", "premium")):
+            raise ValueError("у получателя уже активен Premium")
+        return data
 
     @staticmethod
     def _payload(result: object, attempt_key: str) -> dict[str, Any]:

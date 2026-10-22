@@ -9,7 +9,8 @@ from uuid import UUID
 from aiogram import F, Router
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config import Settings
 from app.core.enums import OrderStatus
@@ -27,6 +28,9 @@ from app.utils.i18n import select_language, tr
 from app.utils.media import render_card, send_card
 
 router = Router(name="menu")
+
+class ReferralInput(StatesGroup):
+    wallet = State()
 
 
 def _fmt(value: Decimal, places: int = 9) -> str:
@@ -109,12 +113,16 @@ async def orders(callback: CallbackQuery, db_user: User, order_repository: Order
         page = min(1000, max(0, int((callback.data or "orders:0").split(":", 1)[1])))
     except ValueError:
         page = 0
+    total = await order_repository.count_for_user(db_user.telegram_id)
+    total_pages = max(1, (total + 4) // 5)
+    page = min(page, total_pages - 1)
     items, has_next = await order_repository.list_for_user(db_user.telegram_id, page)
     text = f"{premium('document')} <b>" + tr("Покупки:", "Purchases:") + "</b>"
+    text += "\n" + tr("Всего: ", "Total: ") + str(total) + f" · {page + 1}/{total_pages}"
     if not items:
         text += "\n\n" + tr("Пока нет покупок.", "No purchases yet.")
     if callback.message:
-        await render_card(callback.message, text, orders_keyboard(items, page, has_next), "orders")
+        await render_card(callback.message, text, orders_keyboard(items, page, has_next, total_pages), "orders")
     await callback.answer()
 
 
@@ -173,11 +181,12 @@ async def order_details(callback: CallbackQuery, db_user: User, order_repository
 async def referrals_screen(
     callback: CallbackQuery, db_user: User, referrals: ReferralService, settings: Settings,
 ) -> None:
-    stats = await referrals.stats(db_user.telegram_id)
+    stats = await referrals.stats(db_user.telegram_id, callback.bot)
+    withdrawals = await referrals.withdrawals(db_user.telegram_id)
     username = settings.TELEGRAM_BOT_USERNAME or (await callback.bot.get_me()).username or "YourBot"
     link = f"https://t.me/{username}?start=ref_{db_user.telegram_id}"
     rate = stats.reward_rate * Decimal("100")
-    level = "Special" if rate >= Decimal("50") else "Standard"
+    level = stats.level.replace("level_", "Level ").title()
     text = (
         f"{premium('users')} <b>" + tr("Рефералы", "Referrals") + "</b>\n\n"
         + tr("<b>Детали:</b>", "<b>Details:</b>") + "\n<blockquote>"
@@ -185,21 +194,54 @@ async def referrals_screen(
         + tr("• Реферальный процент: ", "• Referral rate: ") + _fmt(rate, 2) + "%\n"
         + tr("• Приглашено: ", "• Invited: ") + str(stats.invited) + "\n"
         + tr("• Завершённых покупок друзей: ", "• Friends' completed purchases: ") + str(stats.paid_orders)
+        + "\n" + tr("• Оборот: ", "• Turnover: ") + _fmt(stats.ton_volume) + " TON"
         + "</blockquote>\n\n"
+        + tr("<b>Доступно к выводу:</b>", "<b>Available:</b>") + f"\n<blockquote>TON: {_fmt(stats.balance_ton)}\nUSDT: {_fmt(stats.balance_usdt,6)}</blockquote>\n"
+        + tr("10% от комиссии сервиса; от 500 TON — 20%, от 1000 TON — 30%. Holder 30%, Special 50%. Минимум вывода: 0.1 TON / 1 USDT.",
+             "10% of the service fee; from 500 TON — 20%, from 1000 TON — 30%. Holder 30%, Special 50%. Minimum: 0.1 TON / 1 USDT.") + "\n\n"
         + tr("<b>Выплачено:</b>", "<b>Paid out:</b>") + "\n<blockquote>"
         + f"• GRAM: {_fmt(stats.paid_ton)}\n• USDT: {_fmt(stats.paid_usdt, 6)}</blockquote>\n\n"
         + tr("<b>Ваша реферальная ссылка:</b>", "<b>Your referral link:</b>")
         + f"\n<code>{escape(link)}</code>"
+        + "\n\n" + "\n".join(f"#{w['id']} · {_fmt(Decimal(str(w['amount'])))} {w['currency']} · {escape(w['status'])}" for w in withdrawals)
     )
     if callback.message:
-        await render_card(callback.message, text, back_home(), "referrals")
+        markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=tr("Вывести TON","Withdraw TON"),callback_data="refwithdraw:TON"),InlineKeyboardButton(text=tr("Вывести USDT","Withdraw USDT"),callback_data="refwithdraw:USDT")],
+            back_home().inline_keyboard[0],
+        ])
+        await render_card(callback.message, text, markup, "referrals")
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("refwithdraw:"))
+async def referral_withdraw(callback: CallbackQuery, state: FSMContext) -> None:
+    currency=(callback.data or "").split(":")[-1]
+    if currency not in {"TON","USDT"}:
+        return
+    await state.set_state(ReferralInput.wallet)
+    await state.update_data(referral_currency=currency)
+    if callback.message:
+        await callback.message.answer(tr("Введите свой адрес TON mainnet для вывода ","Enter your TON mainnet wallet for ")+currency,reply_markup=back_home())
+    await callback.answer()
+
+
+@router.message(ReferralInput.wallet)
+async def referral_wallet(message: Message, state: FSMContext, referrals: ReferralService) -> None:
+    data=await state.get_data()
+    try:
+        row_id=await referrals.request_withdrawal(message.from_user.id,data.get("referral_currency",""),message.text or "")
+    except Exception:
+        await message.answer(tr("Не удалось создать вывод: проверьте адрес, минимум 0.1 TON / 1 USDT и отсутствие активной заявки.","Cannot request withdrawal: check wallet, minimum 0.1 TON / 1 USDT and existing requests."))
+        return
+    await state.clear()
+    await message.answer(tr("Заявка на вывод принята: #","Withdrawal requested: #")+str(row_id)+" · creating",reply_markup=back_home())
 
 
 @router.callback_query(F.data == "settings")
 async def settings_screen(callback: CallbackQuery) -> None:
     text = f"{premium('settings')} <b>" + tr("Настройки", "Settings") + "</b>\n\n" + tr(
-        "Язык, документы и ответы на вопросы.", "Language, documents and frequently asked questions."
+        "Язык и ответы на вопросы.", "Language and frequently asked questions."
     )
     if callback.message:
         await render_card(callback.message, text, settings_keyboard(), "settings")

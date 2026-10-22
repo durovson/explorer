@@ -188,7 +188,8 @@ class WorkerManager:
                 order.id,
             )
             return
-        margin = order.amount - provider_debit_ton
+        reserved_reward = await self._orders.referral_reward_for_order(order.id)
+        margin = order.amount - provider_debit_ton - reserved_reward
         if margin <= 0:
             logger.warning(
                 "No positive realized margin for order %s: paid=%s provider_debit=%s",

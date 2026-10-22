@@ -100,6 +100,28 @@ class UserRepository:
         return assigned
 
     async def referral_stats(self, telegram_id: int) -> ReferralStats:
-        response = await self._db.rpc("referral_stats_v2", {"p_user_id": telegram_id})
-        data = response.data[0] if response.data else {}
+        response = await self._db.rpc("shop_referral_stats", {"p_user_id": telegram_id})
+        data = response.data or {}
         return ReferralStats.model_validate(data)
+
+    async def referral_profile(self, user_id: int) -> dict:
+        response = await self._db.run(lambda c: c.table("shop_referral_profiles").select("*").eq("user_id", user_id).execute())
+        return response.data[0] if response.data else {}
+
+    async def save_referral_profile(self, values: dict) -> None:
+        await self._db.run(lambda c: c.table("shop_referral_profiles").upsert(values).execute())
+
+    async def request_referral_withdrawal(self, uid: int, currency: str, wallet: str) -> int:
+        response = await self._db.rpc("shop_request_referral_withdrawal", {"p_user_id":uid,"p_currency":currency,"p_wallet":wallet})
+        return int(response.data)
+
+    async def referral_withdrawals(self, user_id: int | None = None) -> list[dict]:
+        def query(c):
+            q = c.table("shop_referral_withdrawals").select("*")
+            if user_id is not None:
+                q = q.eq("user_id",user_id)
+            return q.order("id",desc=True).limit(20).execute()
+        return (await self._db.run(query)).data or []
+
+    async def advance_referral_withdrawal(self, row_id: int, status: str, tx_hash: str | None) -> None:
+        await self._db.rpc("shop_advance_referral_withdrawal", {"p_id":row_id,"p_status":status,"p_hash":tx_hash})

@@ -69,6 +69,10 @@ class FulfillmentAttempt(BaseModel):
 
 
 class ReferralStats(BaseModel):
+    level: str = "level_1"
+    ton_volume: Decimal = Decimal("0")
+    balance_ton: Decimal = Decimal("0")
+    balance_usdt: Decimal = Decimal("0")
     invited: int = 0
     paid_orders: int = 0
     paid_ton: Decimal = Decimal("0")

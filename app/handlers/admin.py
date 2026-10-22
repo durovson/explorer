@@ -7,10 +7,32 @@ from aiogram.types import CallbackQuery, Message
 
 from app.keyboards.menu import back_home
 from app.services.admin import AdminService
+from app.services.referrals import ReferralService
 from app.utils.emoji import premium
 from app.utils.media import render_card
 
 router = Router(name="admin")
+
+@router.message(Command("ref_queue", "ref_status", "ref_profile"))
+async def referral_admin(message: Message, command: CommandObject, admin: AdminService, referrals: ReferralService) -> None:
+    try:
+        admin.require(message.from_user.id)
+    except PermissionError:
+        return
+    try:
+        args=(command.args or "").split()
+        if command.command=="ref_queue":
+            rows=await referrals.withdrawals()
+            text="\n".join(f"#{w['id']} user={w['user_id']} {w['amount']} {w['currency']} · {w['status']} · {w['wallet_address']}" for w in rows)
+            await message.answer(escape(text)[:4000] or "Нет заявок")
+            return
+        if command.command=="ref_status":
+            await referrals.advance(int(args[0]),args[1],args[2] if len(args)>2 else None)
+        elif command.command=="ref_profile":
+            await referrals.set_profile(int(args[0]),args[1],int(args[2]) if len(args)>2 else None)
+        await message.answer("Реферальные данные обновлены.")
+    except Exception:
+        await message.answer("Операция не выполнена. Проверьте аргументы, статус и hash транзакции.")
 
 
 def _stats_text(stats) -> str:
